@@ -1,0 +1,1 @@
+﻿const sqlite3 = require("sqlite3").verbose(); const db = new sqlite3.Database("./notes.db"); db.all("SELECT * FROM Users", [], (err, rows) => { if (err) console.error(err); console.log("Users:"); console.log(rows); db.close(); });

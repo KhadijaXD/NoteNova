@@ -1,74 +1,45 @@
-# Setting Up Llama for Smart Note Organizer
+# NoteNova AI Features
 
-This guide will help you set up Llama to enhance your Smart Note Organizer application with better summaries and flashcards.
+NoteNova uses Llama 3.3 (70B) to provide powerful AI features that enhance your note-taking experience. All AI features are integrated directly into the application with no additional setup required!
 
-## Installing Ollama
+## AI-Powered Features
 
-The easiest way to use Llama is through Ollama, which provides a simple interface for running Llama models locally.
+### 1. Smart Summaries
+Our AI automatically generates concise summaries of your notes, focusing on the most important information. This helps you quickly review your notes without having to read through all the content.
 
-### Step 1: Install Ollama
+### 2. Flashcard Generation
+NoteNova can generate study flashcards from your notes with just one click. The AI identifies key concepts and creates question/answer pairs to help you study and review.
 
-Download and install Ollama from [https://ollama.ai/](https://ollama.ai/)
+### 3. Auto-Tagging
+When you upload or create a note, NoteNova's AI can identify relevant topics and automatically tag your content, making it easier to organize and find your notes later.
 
-- **Windows**: Download the installer from the website
-- **macOS**: Download the app from the website
-- **Linux**: Run `curl -fsSL https://ollama.ai/install.sh | sh`
+## How It Works
 
-### Step 2: Pull the Llama Model
+NoteNova seamlessly connects to Meta's Llama 3.3 (70B) model via a secure API. All processing happens in the cloud, which means:
 
-After installing Ollama, open a terminal or command prompt and run:
+- No need to install any additional software
+- No large model downloads required
+- Works consistently across all devices
+- Faster processing than local models
 
-```bash
-ollama pull llama3
-```
+## Privacy and Security
 
-This will download the Llama 3 model. You can also choose different sizes based on your hardware capabilities:
+- Your notes are only transmitted when you use an AI feature
+- Data is not stored or used for model training
+- API connections are secured using industry-standard encryption
 
-- `ollama pull llama3:8b` (smaller, faster, less accurate)
-- `ollama pull llama3:70b` (larger, slower, more accurate)
+## Using AI Features
 
-### Step 3: Start the Ollama Server
-
-Ollama should start automatically after installation. If it doesn't, you can start it manually:
-
-- **Windows**: Run Ollama from the Start menu
-- **macOS**: Open the Ollama app
-- **Linux**: Run `ollama serve` in your terminal
-
-Verify the server is running by opening a browser and visiting: `http://localhost:11434`
-
-## Testing Your Setup
-
-Before using Smart Note Organizer, test that your Llama setup is working correctly:
-
-```bash
-ollama run llama3 "Summarize this paragraph in 2 sentences: The Smart Note Organizer is an application designed to help students manage their academic notes. It includes features for importing PDFs, auto-tagging content, generating summaries, and creating flashcards for study sessions."
-```
-
-You should receive a concise summary response.
+- **Regenerate Summary**: On any note page, click the "Regenerate Summary" button to create a new AI-powered summary
+- **Generate Flashcards**: Click the "Generate Flashcards" button on any note to create study cards
+- **View Flashcards**: Access your AI-generated flashcards from the note page
 
 ## Troubleshooting
 
-If you encounter issues:
+If you encounter any issues with AI features:
 
-1. **Server not running**: Ensure Ollama is running by checking `http://localhost:11434`
-2. **Out of memory errors**: Try using a smaller model like `llama3:8b`
-3. **Slow responses**: This is normal for the first few requests as the model loads into memory
+1. Check your internet connection
+2. Ensure your note has sufficient content (at least 200 words recommended)
+3. Try again later if the service is temporarily unavailable
 
-## Advanced Configuration
-
-For better performance, you can modify the Ollama server settings in the application:
-
-- Open `smart-note-organizer/backend/server.js`
-- Find the `generateSummary` function
-- Adjust the model, temperature, or max_tokens parameters to tune the output
-
-## Using with Smart Note Organizer
-
-Once Ollama is running with Llama 3, your Smart Note Organizer application will automatically:
-
-1. Generate concise, focused summaries of your notes
-2. Create better-quality flashcards for studying
-3. Provide the option to regenerate summaries for existing notes
-
-Enjoy your enhanced note-taking experience with Llama-powered AI features! 
+For additional help, contact support at support@notenova.app 

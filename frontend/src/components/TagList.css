@@ -2,9 +2,16 @@
   margin-bottom: 2rem;
 }
 
+.tag-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
 .tag-list-title {
   font-size: 1.1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
   color: var(--text-color);
 }
 
@@ -72,6 +79,26 @@
   text-decoration: underline;
 }
 
+.clear-tags-btn.prominent {
+  background-color: var(--background-color);
+  border: 1px solid var(--border-color);
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
 .clear-tags-btn:hover {
   color: #1765cc;
+}
+
+.tag-filter-info {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--text-secondary, #999);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.tag-filter-info small {
+  opacity: 0.8;
 } 

@@ -1,0 +1,3 @@
+@echo off
+echo Starting NoteNova backend with environment variables...
+node load-env-windows.js && nodemon server.js 

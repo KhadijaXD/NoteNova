@@ -1,0 +1,24 @@
+# Email Configuration for NoteNova
+
+# Email credentials
+EMAIL_USER=khadijarashid1204@gmail.com
+EMAIL_PASS=uoijdslffoizxxvy
+EMAIL_SERVICE=gmail
+EMAIL_FROM=NoteNova <khadijarashid1204@gmail.com>
+
+# Set to 'true' to log emails to console only, 'false' to send real emails
+FORCE_CONSOLE_LOGGING=false
+
+# Environment Variables for NoteNova Backend
+# Copy this file to .env and update with your actual values
+
+# JWT Secret for authentication
+JWT_SECRET=your_secure_jwt_secret_key_here
+
+# OpenRouter API configuration
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_REFERER=http://localhost:3000
+OPENROUTER_SITE_NAME=NoteNova
+
+# Server port (optional, defaults to 5001)
+PORT=5001 

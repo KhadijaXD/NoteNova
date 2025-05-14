@@ -1,6 +1,7 @@
 import axios from 'axios';
+import authService from './auth';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = 'http://localhost:5001/api';
 
 // Create axios instance
 const apiClient = axios.create({
@@ -10,6 +11,18 @@ const apiClient = axios.create({
     'Accept': 'application/json'
   }
 });
+
+// Add authentication token to requests
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = authService.getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 // Upload a file (PDF, text)
 export const uploadFile = async (file) => {
@@ -100,14 +113,58 @@ export const searchNotes = async (query, tags) => {
 
 // Generate flashcards for a note
 export const generateFlashcards = async (id) => {
-  const response = await apiClient.get(`/notes/${id}/flashcards`);
-  return response.data;
+  try {
+    // Use the /flashcards/generate endpoint to force regeneration
+    const response = await apiClient.post(`/notes/${id}/flashcards/generate`, {}, {
+      timeout: 90000 // Increase timeout to 90 seconds for AI-powered generation
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Flashcard generation error:', error);
+    if (error.response) {
+      const serverError = error.response.data?.error || error.response.data?.message || 'Server error';
+      throw new Error(`Flashcard generation failed: ${serverError}`);
+    } else if (error.request) {
+      throw new Error('No response from server. The request may have timed out due to high demand.');
+    } else {
+      throw new Error(`Flashcard generation error: ${error.message}`);
+    }
+  }
 };
 
 // Regenerate a summary for a note using Llama
 export const regenerateSummary = async (id) => {
-  const response = await apiClient.post(`/notes/${id}/regenerate-summary`);
-  return response.data;
+  try {
+    const response = await apiClient.post(`/notes/${id}/regenerate-summary`, {}, {
+      timeout: 60000 // Increase timeout to 60 seconds for AI-powered generation
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Summary regeneration error:', error);
+    if (error.response) {
+      const serverError = error.response.data?.error || error.response.data?.message || 'Server error';
+      throw new Error(`Summary regeneration failed: ${serverError}`);
+    } else if (error.request) {
+      throw new Error('No response from server. The request may have timed out due to high demand.');
+    } else {
+      throw new Error(`Summary regeneration error: ${error.message}`);
+    }
+  }
+};
+
+// Get existing flashcards for a note without generating new ones
+export const getFlashcards = async (id) => {
+  try {
+    const response = await apiClient.get(`/notes/${id}/flashcards?noGenerate=true`, {
+      timeout: 5000
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error getting flashcards:', error);
+    // We're not throwing an error here because we want this to fail silently
+    // if there are no flashcards
+    return null;
+  }
 };
 
 export default {
@@ -119,5 +176,6 @@ export default {
   deleteNote,
   searchNotes,
   generateFlashcards,
-  regenerateSummary
+  regenerateSummary,
+  getFlashcards
 }; 

@@ -262,4 +262,12 @@
   .notes-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.filtered-tags {
+  margin-left: 0.5rem;
+}
+
+.filtered-tags .search-info-tag:first-of-type {
+  margin-left: 0.3rem;
 } 

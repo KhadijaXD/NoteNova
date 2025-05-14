@@ -1,55 +1,127 @@
+/* Override all animations globally but keep colors and borders */
+body *,
+body * ::before,
+body * ::after {
+  backface-visibility: hidden !important;
+}
+
+/* Override focus animations too */
+body *:hover,
+body *:focus,
+body *:active {
+  /* Animation overrides removed to allow button hover effects */
+}
+
+/* Basic resets */
+* {
+  /* Animation disabling removed to allow button effects */
+}
+
+/* Basic styles with gradients and animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes shineEffect {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
 .flashcards-page {
   max-width: 900px;
   margin: 0 auto;
   padding: 3rem 1.5rem;
   animation: fadeIn 0.6s ease-out;
+  background-image: 
+    radial-gradient(circle at top right, rgba(157, 78, 221, 0.08), transparent 60%),
+    radial-gradient(circle at bottom left, rgba(157, 78, 221, 0.05), transparent 60%);
 }
 
 .flashcards-header {
   text-align: center;
-  margin-bottom: 3rem;
+  margin-bottom: 3.5rem;
   position: relative;
 }
 
-.flashcards-header:after {
+.flashcards-header::after {
   content: '';
   position: absolute;
-  bottom: -1.5rem;
+  bottom: -1.2rem;
   left: 50%;
   transform: translateX(-50%);
-  width: 150px;
+  width: 100px;
   height: 3px;
-  background: var(--gradient-border);
+  background: linear-gradient(90deg, transparent, #9d4edd, transparent);
   border-radius: 3px;
-  opacity: 0.7;
-  background-size: 200% 200%;
-  animation: gradientShift 6s infinite;
 }
 
 .flashcards-header h1 {
-  font-size: 2.5rem;
+  font-size: 2.8rem;
   margin-bottom: 1rem;
-  background: linear-gradient(90deg, var(--purple-light) 0%, var(--primary-color) 50%, var(--purple-dark) 100%);
+  background: linear-gradient(90deg, #9d4edd 0%, #a259ec 50%, #8a2be2 100%);
   background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   text-fill-color: transparent;
-  text-shadow: 0 0 30px rgba(157, 78, 221, 0.3);
   animation: gradientShift 6s infinite;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-shadow: 0 5px 10px rgba(0, 0, 0, 0.5);
 }
 
+/* Updated card counter with improved styling */
 .card-counter {
-  color: var(--text-secondary);
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.6rem 1.2rem;
+  background: linear-gradient(135deg, rgba(157, 78, 221, 0.15), rgba(162, 89, 236, 0.08));
+  border-radius: 24px;
   font-size: 1.1rem;
-  font-style: italic;
-  letter-spacing: 0.03em;
-  opacity: 0.8;
-  transition: opacity 0.3s ease;
+  color: #a259ec;
+  border: 1px solid rgba(157, 78, 221, 0.25);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  min-width: 100px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(5px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
-.card-counter:hover {
-  opacity: 1;
+.card-counter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(157, 78, 221, 0.05) 0%, transparent 100%);
+  z-index: -1;
+}
+
+.card-counter::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
 }
 
 .flashcard-container {
@@ -57,7 +129,7 @@
   position: relative;
 }
 
-.flashcard-container:after {
+.flashcard-container::after {
   content: '';
   position: absolute;
   bottom: -10px;
@@ -65,177 +137,159 @@
   transform: translateX(-50%);
   width: 70%;
   height: 20px;
-  background: radial-gradient(ellipse at center, rgba(157, 78, 221, 0.3) 0%, transparent 70%);
-  filter: blur(7px);
+  background: radial-gradient(ellipse at center, rgba(157, 78, 221, 0.2) 0%, transparent 70%);
+  filter: blur(10px);
   z-index: -1;
 }
 
-@keyframes floatCard {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
-  100% { transform: translateY(0); }
-}
-
+/* Fancy card styling matching the note view */
 .flashcard {
-  background-color: var(--card-bg-color);
+  background-color: #181818;
   border-radius: 16px;
-  box-shadow: var(--shadow-md), 0 0 0 1px var(--border-color);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
   padding: 2.5rem;
   margin-bottom: 2rem;
-  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   min-height: 400px;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  max-height: 550px;
-  backdrop-filter: blur(10px);
+  border: 1px solid rgba(157, 78, 221, 0.2);
   position: relative;
-  border: 1px solid transparent;
-  animation: fadeIn 0.7s ease-out;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+  animation: slideIn 0.7s ease-out;
+  backdrop-filter: blur(10px);
 }
 
 .flashcard:hover {
-  box-shadow: var(--shadow-lg), var(--shadow-glow);
-  transform: translateY(-10px);
-  border-color: var(--primary-color);
-  animation: floatCard 5s ease-in-out infinite;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(157, 78, 221, 0.4);
+  border-color: #9d4edd;
+  transform: translateY(-7px);
 }
 
-.flashcard:before {
+/* Purple gradient border on hover */
+.flashcard::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, rgba(157, 78, 221, 0.07) 0%, transparent 100%);
-  border-radius: 16px;
-  z-index: 0;
-}
-
-.flashcard:after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 16px;
-  padding: 1px;
-  background: var(--gradient-border);
-  -webkit-mask: 
-    linear-gradient(#fff 0 0) content-box, 
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
+  height: 4px;
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
+  background-size: 200% 200%;
+  animation: gradientShift 8s infinite;
   opacity: 0;
   transition: opacity 0.4s ease;
 }
 
-.flashcard:hover:after {
+.flashcard:hover::before {
   opacity: 1;
 }
 
+/* Subtle gradient overlay */
+.flashcard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(157, 78, 221, 0.03) 0%, transparent 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+
 .flashcard-inner {
-  flex: 1;
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 1;
+  height: 100%;
 }
 
-.flashcard-front, .flashcard-back {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.flashcard-front h3, .flashcard-back h3 {
+.flashcard-front h3, 
+.flashcard-back h3 {
   font-size: 1.4rem;
   margin-bottom: 1.5rem;
-  color: var(--primary-color);
-  border-bottom: 1px solid var(--border-color);
+  color: #9d4edd;
+  border-bottom: 1px solid #333;
   padding-bottom: 1rem;
+  display: inline-block;
   position: relative;
   letter-spacing: 0.03em;
-  display: inline-block;
 }
 
-.flashcard-front h3:after, .flashcard-back h3:after {
+.flashcard-front h3::after, 
+.flashcard-back h3::after {
   content: '';
   position: absolute;
   bottom: -1px;
   left: 0;
-  width: 80px;
+  width: 60px;
   height: 2px;
-  background: var(--gradient-primary);
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
   background-size: 200% 200%;
   animation: gradientShift 6s infinite;
 }
 
-.flashcard-front p, .flashcard-back p {
+.flashcard-question {
   font-size: 1.25rem;
   line-height: 1.7;
-  flex: 1;
   margin-bottom: 2rem;
-  letter-spacing: 0.01em;
+  padding: 1.8rem;
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  min-height: 80px;
+  overflow-y: auto;
+  max-height: 220px;
+  word-break: break-word;
+  color: #eee;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.1);
+  flex: 1;
 }
 
 .flashcard-answer {
-  text-align: left;
-  white-space: pre-wrap;
-  background-color: rgba(0, 0, 0, 0.25);
-  padding: 1.75rem;
-  border-radius: 12px;
-  border-left: 3px solid var(--primary-color);
-  font-family: inherit;
   font-size: 1.2rem;
   line-height: 1.7;
-  max-height: 350px;
-  overflow-y: auto;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
-  transition: all 0.3s ease;
-  position: relative;
   margin-bottom: 0;
-}
-
-.flashcard-answer::-webkit-scrollbar {
-  width: 6px;
-}
-
-.flashcard-answer::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 3px;
-}
-
-.flashcard-answer::-webkit-scrollbar-thumb {
-  background: var(--primary-color);
-  border-radius: 3px;
+  padding: 1.8rem;
+  background-color: rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  border-left: 3px solid #9d4edd;
+  min-height: 80px;
+  overflow-y: auto;
+  max-height: 300px;
+  word-break: break-word;
+  color: #eee;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.1);
+  position: relative;
 }
 
 .flashcard-back {
   margin-top: 2rem;
-  padding-top: 2rem;
-  border-top: 1px dashed var(--border-color);
-  animation: fadeIn 0.5s ease-out;
+  padding-top: 1.5rem;
+  border-top: 1px dashed #333;
+  animation: fadeIn 0.3s ease-out;
 }
 
-@keyframes glowPulse {
-  0% { box-shadow: 0 0 5px rgba(157, 78, 221, 0.5); }
-  50% { box-shadow: 0 0 15px rgba(157, 78, 221, 0.8); }
-  100% { box-shadow: 0 0 5px rgba(157, 78, 221, 0.5); }
-}
-
+/* Buttons with animations */
 .flip-btn {
   align-self: center;
-  padding: 0.7rem 2rem;
-  background: var(--gradient-primary);
+  padding: 0.8rem 2.5rem;
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
   background-size: 200% 200%;
+  color: white;
+  border: none;
   border-radius: 30px;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.3s ease;
+  cursor: pointer;
   font-weight: 500;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   position: relative;
   overflow: hidden;
+  transition: all 0.3s ease;
   animation: gradientShift 6s infinite;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 5px rgba(157, 78, 221, 0.5);
+  margin-top: auto;
+  font-size: 1rem;
+}
+
+.flip-btn:hover {
+  transform: translateY(-3px) scale(1.05);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(157, 78, 221, 0.7);
 }
 
 .flip-btn:before {
@@ -245,67 +299,118 @@
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: all 0.6s ease;
-}
-
-.flip-btn:hover {
-  transform: scale(1.05) translateY(-3px);
-  box-shadow: var(--shadow-md), 0 0 15px rgba(157, 78, 221, 0.6);
-  animation: glowPulse 2s infinite, gradientShift 6s infinite;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transition: none;
+  animation: shineEffect 1.5s ease-in-out;
 }
 
 .flip-btn:hover:before {
-  left: 100%;
+  animation: shineEffect 1.5s ease-in-out infinite;
 }
 
 .flashcard-controls {
   display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  margin-top: 1rem;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 2rem;
 }
 
 .flashcard-controls button {
-  flex: 1;
-  border-radius: 12px;
-  padding: 0.8rem 1rem;
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 1.4rem;
   position: relative;
   overflow: hidden;
+  transition: all 0.3s ease;
 }
 
-.flashcard-controls button:before {
+/* Arrow button styling */
+.flashcard-controls button:first-child,
+.flashcard-controls button:last-child {
+  background-color: rgba(157, 78, 221, 0.1);
+  color: #9d4edd;
+  border: 1px solid rgba(157, 78, 221, 0.3);
+}
+
+.flashcard-controls button:hover:not(.disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3), 0 0 10px rgba(157, 78, 221, 0.3);
+  background-color: rgba(157, 78, 221, 0.2);
+  color: white;
+}
+
+/* Disabled button styling */
+.flashcard-controls button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: #666;
+  border-color: rgba(157, 78, 221, 0.1);
+  background-color: rgba(157, 78, 221, 0.05);
+  box-shadow: none;
+}
+
+.flashcard-controls button.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Add gliding effect to all buttons */
+.flip-btn:before,
+.flashcard-controls button:not(.disabled):before {
   content: '';
   position: absolute;
   top: 0;
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: all 0.6s ease;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transition: none;
 }
 
-.flashcard-controls button:hover:before {
-  left: 100%;
+.flip-btn:hover:before,
+.flashcard-controls button:not(.disabled):hover:before {
+  animation: shineEffect 1.5s ease-in-out infinite;
 }
 
+/* Export button with improved design */
 .flashcards-actions {
+  margin-top: 4rem;
   display: flex;
   justify-content: center;
-  gap: 2rem;
-  margin-top: 3rem;
 }
 
 .flashcards-actions button {
-  min-width: 180px;
-  border-radius: 12px;
-  padding: 0.8rem 1.5rem;
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  padding: 0.9rem 2rem;
+  border-radius: 30px;
+  font-size: 1rem;
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
+  background-size: 200% 200%;
+  color: white;
+  border: none;
+  min-width: 220px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  animation: gradientShift 6s infinite;
   position: relative;
   overflow: hidden;
+  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+}
+
+.flashcards-actions button:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4), 0 0 15px rgba(157, 78, 221, 0.5);
 }
 
 .flashcards-actions button:before {
@@ -316,33 +421,261 @@
   width: 100%;
   height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: all 0.6s ease;
+  transition: none;
 }
 
 .flashcards-actions button:hover:before {
-  left: 100%;
+  animation: shineEffect 1.5s ease-in-out infinite;
 }
 
+/* Navigation */
+.navigation-header {
+  margin-bottom: 2rem;
+}
+
+.navigation-header button {
+  background: none;
+  border: none;
+  color: #9d4edd;
+  font-size: 2.2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  width: 45px;
+  height: 45px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  position: relative;
+}
+
+.navigation-header button:hover {
+  transform: translateX(-5px);
+  color: #a259ec;
+  text-shadow: 0 0 8px rgba(157, 78, 221, 0.6);
+}
+
+.navigation-header button::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(157, 78, 221, 0.1);
+  border-radius: 50%;
+  z-index: -1;
+  transform: scale(0);
+  transition: transform 0.3s ease;
+}
+
+.navigation-header button:hover::after {
+  transform: scale(1);
+}
+
+/* Scrollbars */
+.flashcard-question::-webkit-scrollbar,
+.flashcard-answer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.flashcard-question::-webkit-scrollbar-track,
+.flashcard-answer::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.flashcard-question::-webkit-scrollbar-thumb,
+.flashcard-answer::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #9d4edd, #a259ec);
+  border-radius: 3px;
+}
+
+/* Responsive */
 @media (max-width: 768px) {
   .flashcards-page {
     padding: 2rem 1rem;
   }
   
+  .flashcards-header h1 {
+    font-size: 2rem;
+  }
+  
   .flashcard {
-    min-height: 300px;
     padding: 1.5rem;
   }
   
-  .flashcard-front p, .flashcard-back p {
-    font-size: 1rem;
-  }
-  
-  .flashcard-controls, .flashcards-actions {
+  .flashcard-controls {
     flex-direction: column;
     gap: 1rem;
   }
   
-  .flashcards-actions button {
-    min-width: 100%;
+  .flashcard-controls button {
+    width: 100%;
   }
+}
+
+/* No Flashcards Container */
+.no-flashcards-container {
+  background-color: #181818;
+  border-radius: 16px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  padding: 3rem;
+  text-align: center;
+  max-width: 700px;
+  margin: 2rem auto;
+  border: 1px solid rgba(157, 78, 221, 0.2);
+  position: relative;
+  transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+  animation: slideIn 0.7s ease-out;
+}
+
+.no-flashcards-container:hover {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(157, 78, 221, 0.4);
+  border-color: #9d4edd;
+  transform: translateY(-7px);
+}
+
+.no-flashcards-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
+  background-size: 200% 200%;
+  animation: gradientShift 8s infinite;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.no-flashcards-container:hover::before {
+  opacity: 1;
+}
+
+.no-flashcards-container h2 {
+  color: #9d4edd;
+  font-size: 2rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  display: inline-block;
+}
+
+.no-flashcards-container h2::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, #9d4edd, #a259ec);
+  background-size: 200% 200%;
+  animation: gradientShift 6s infinite;
+}
+
+.no-flashcards-container p {
+  margin-bottom: 2rem;
+  color: #ccc;
+  max-width: 80%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.no-flashcards-actions {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.flashcards-help {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 1.5rem 2rem;
+  text-align: left;
+  margin-top: 2rem;
+  border-left: 3px solid var(--primary-color);
+  animation: slideIn 0.5s ease-out;
+}
+
+.flashcards-help h3 {
+  color: var(--primary-color);
+  margin-bottom: 1rem;
+  font-size: 1.2rem;
+}
+
+.flashcards-help ul {
+  padding-left: 1.5rem;
+  line-height: 1.7;
+}
+
+.flashcards-help li {
+  margin-bottom: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* Center the Show Answer button */
+.show-answer-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+/* Error container */
+.error-container {
+  max-width: 800px;
+  margin: 3rem auto;
+  padding: 2rem;
+  text-align: center;
+  background-color: var(--card-bg-color, #1e1e2f);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-left: 3px solid #e74c3c;
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.error-container h2 {
+  color: #e74c3c;
+  margin-bottom: 1rem;
+  font-size: 1.8rem;
+}
+
+.error-container p {
+  margin-bottom: 2rem;
+  color: var(--text-color, #ddd);
+  font-size: 1.1rem;
+}
+
+.error-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.error-actions .btn {
+  padding: 0.7rem 1.5rem;
+  min-width: 150px;
+}
+
+/* No flashcards container */
+.no-flashcards-container {
+  max-width: 800px;
+  margin: 3rem auto;
+  padding: 2rem;
+  text-align: center;
+  background-color: var(--card-bg-color, #1e1e2f);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.no-flashcards-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
 } 

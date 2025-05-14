@@ -33,13 +33,25 @@ const Flashcards = () => {
         
         setNote(noteData);
         
-        // Generate flashcards
+        // Use existing flashcards instead of generating new ones
         try {
-          const flashcardsData = await apiService.generateFlashcards(id);
-          setFlashcards(flashcardsData);
+          // First try to get flashcards from the note itself
+          if (noteData.flashcards && noteData.flashcards.notes && noteData.flashcards.notes.length > 0) {
+            console.log('Using flashcards from note data');
+            setFlashcards(noteData.flashcards);
+          } else {
+            // If not in the note, fetch from API with noGenerate flag
+            console.log('Fetching flashcards from API');
+            const flashcardsData = await apiService.getFlashcards(id);
+            if (flashcardsData && flashcardsData.notes && flashcardsData.notes.length > 0) {
+              setFlashcards(flashcardsData);
+            } else {
+              setError('No flashcards found for this note. Please generate flashcards first.');
+            }
+          }
         } catch (flashcardsError) {
-          console.error('Error generating flashcards:', flashcardsError);
-          setError('Failed to generate flashcards. Please ensure your note has enough content.');
+          console.error('Error getting flashcards:', flashcardsError);
+          setError('Failed to retrieve flashcards. Please go back and try generating them again.');
         }
       } catch (err) {
         console.error('Error loading note:', err);
@@ -80,8 +92,6 @@ const Flashcards = () => {
     
     if (activeCardIndex < flashcards.notes.length - 1) {
       setActiveCardIndex(activeCardIndex + 1);
-    } else {
-      setActiveCardIndex(0); // Loop back to the first card
     }
   };
 
@@ -93,8 +103,6 @@ const Flashcards = () => {
     
     if (activeCardIndex > 0) {
       setActiveCardIndex(activeCardIndex - 1);
-    } else {
-      setActiveCardIndex(flashcards.notes.length - 1); // Loop to the last card
     }
   };
 
@@ -112,40 +120,74 @@ const Flashcards = () => {
       <div className="error-container">
         <h2>Error</h2>
         <p>{error}</p>
-        <button className="btn" onClick={() => navigate(`/note/${id}`)}>
-          Back to Note
-        </button>
+        <div className="error-actions">
+          <button className="btn" onClick={() => navigate(`/note/${id}`)}>
+            Back to Note
+          </button>
+          {error.includes('No flashcards found') && (
+            <button className="btn btn-primary" onClick={() => navigate(`/note/${id}`)}>
+              Generate Flashcards
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   if (!flashcards || !flashcards.notes || flashcards.notes.length === 0) {
     return (
-      <div className="error-container">
-        <h2>No Flashcards Available</h2>
-        <p>This note doesn't have enough content to generate meaningful flashcards.</p>
-        <button className="btn" onClick={() => navigate(`/note/${id}`)}>
-          Back to Note
-        </button>
+      <div className="flashcards-page">
+        <div className="navigation-header">
+          <button
+            onClick={() => navigate(`/note/${id}`)}
+            aria-label="Back to Note"
+          >
+            ←
+          </button>
+        </div>
+        
+        <div className="no-flashcards-container">
+          <h2>No Flashcards Available</h2>
+          <p>This note doesn't have enough content to generate meaningful flashcards.</p>
+          
+          <div className="no-flashcards-actions">
+            <button 
+              className="btn" 
+              onClick={() => navigate(`/note/${id}`)}
+            >
+              Back to Note
+            </button>
+            <button 
+              className="btn btn-primary" 
+              onClick={() => navigate(`/note/${id}`)}
+            >
+              Generate Flashcards
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
+  // Clean up question and answer text
   const currentCard = flashcards.notes[activeCardIndex];
+  let questionText = currentCard.fields.Front;
+  let answerText = currentCard.fields.Back;
+  
+  // Remove "Question:" prefix if present
+  if (questionText.includes("Question:")) {
+    questionText = questionText.split("Question:")[1].split("Answer:")[0].trim();
+  }
+  
+  // Remove "Answer:" prefix if present
+  if (answerText.includes("Answer:")) {
+    answerText = answerText.split("Answer:")[1].trim();
+  }
 
   return (
     <div className="flashcards-page">
       <div className="navigation-header">
         <button
-          className="icon-btn back-btn"
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#a259ec',
-            fontSize: '2rem',
-            cursor: 'pointer',
-            marginBottom: '1rem'
-          }}
           onClick={() => navigate(`/note/${id}`)}
           aria-label="Back to Note"
         >
@@ -153,52 +195,61 @@ const Flashcards = () => {
         </button>
       </div>
       <div className="flashcards-header">
-        <h1>Flashcards for: {note.title}</h1>
-        <p className="card-counter">
-          Card {activeCardIndex + 1} of {flashcards.notes.length}
-        </p>
+        <h1>{note.title}</h1>
       </div>
       <div className="flashcard-container">
         <div className="flashcard">
           <div className="flashcard-inner">
             <div className="flashcard-front">
               <h3>Question</h3>
-              <div dangerouslySetInnerHTML={{ __html: currentCard.fields.Front }} />
-              <button className="btn flip-btn" style={{ marginTop: '0.5rem' }} onClick={toggleAnswer}>
-                Show Answer
-              </button>
+              <div className="flashcard-question">
+                {questionText}
+              </div>
+              <div className="show-answer-container">
+                <button 
+                  className="flip-btn" 
+                  onClick={toggleAnswer}
+                >
+                  Show Answer
+                </button>
+              </div>
             </div>
             {showAnswer && (
               <div className="flashcard-back">
                 <h3>Answer</h3>
-                <div className="flashcard-answer" dangerouslySetInnerHTML={{ __html: currentCard.fields.Back }} />
+                <div className="flashcard-answer">
+                  {answerText}
+                </div>
               </div>
             )}
           </div>
         </div>
         <div className="flashcard-controls">
-          <button className="btn btn-secondary" onClick={prevCard}>
-            Previous
+          <button 
+            onClick={prevCard} 
+            disabled={activeCardIndex === 0}
+            className={activeCardIndex === 0 ? "disabled" : ""}
+          >
+            ←
           </button>
-          <button className="btn" onClick={nextCard}>
-            Next
+          <div className="card-counter">
+            <span>{activeCardIndex + 1}</span>
+            <span style={{ margin: '0 4px', opacity: '0.7' }}>/</span>
+            <span>{flashcards.notes.length}</span>
+          </div>
+          <button 
+            onClick={nextCard}
+            disabled={activeCardIndex === flashcards.notes.length - 1}
+            className={activeCardIndex === flashcards.notes.length - 1 ? "disabled" : ""}
+          >
+            →
           </button>
         </div>
       </div>
-      <div className="flashcards-actions" style={{ justifyContent: 'center' }}>
-        <button
-          className="btn btn-outline"
-          onClick={handleDownload}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontWeight: 500,
-            color: '#fff',
-          }}
-        >
-          <span style={{ fontSize: '1.3rem', lineHeight: 1, color: '#fff' }}>⭳</span>
-          <span style={{ fontSize: '1rem', color: '#fff', fontWeight: 400 }}>Export Anki JSON file</span>
+      <div className="flashcards-actions">
+        <button onClick={handleDownload}>
+          <span style={{ fontSize: '1.2rem' }}>⭳</span>
+          Export Anki JSON file
         </button>
       </div>
     </div>

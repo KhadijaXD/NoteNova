@@ -75,6 +75,8 @@ const AddNoteModal = ({ isOpen, onClose, onNoteAdded }) => {
     setError(null);
 
     try {
+      console.log("File upload started:", file.name);
+      
       // Simulate upload progress
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => {
@@ -102,14 +104,15 @@ const AddNoteModal = ({ isOpen, onClose, onNoteAdded }) => {
         throw new Error(`File type ${fileType || fileExtension} is not supported. Please use PDF, TXT, or DOCX files.`);
       }
 
-      // Upload to server
-      const response = await apiService.uploadFile(file);
+      // Upload to server using db service
+      console.log("Uploading file to server...");
+      const response = await dbService.uploadFile(file);
+      console.log("File upload response:", response);
       
       clearInterval(progressInterval);
       setUploadProgress(100);
       
-      // Save to local database
-      await dbService.saveNote(response.note);
+      // No need to save to local database again as the API already returns the saved note
       
       // Reset upload progress after a delay
       setTimeout(() => {
@@ -120,7 +123,8 @@ const AddNoteModal = ({ isOpen, onClose, onNoteAdded }) => {
       
     } catch (err) {
       console.error('Error uploading file:', err);
-      setError(err.message || 'Failed to upload file. Please try again with a different file.');
+      setError(typeof err === 'string' ? err : 
+               err.message || 'Failed to upload file. Please try again with a different file.');
       setUploadProgress(0);
     } finally {
       setIsLoading(false);
@@ -145,12 +149,12 @@ const AddNoteModal = ({ isOpen, onClose, onNoteAdded }) => {
         title,
         content,
         tags: tags.split(',').map(tag => tag.trim()).filter(tag => tag),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
       
       // Save to local database
-      await dbService.saveNote(newNote);
+      await dbService.saveNoteLocally(newNote);
       
       // Also save to server if possible
       try {

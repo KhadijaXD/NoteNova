@@ -1,0 +1,1 @@
+﻿const sqlite3 = require("sqlite3").verbose(); const db = new sqlite3.Database("./notes.db"); db.all("SELECT id, title, user_id FROM Notes ORDER BY id DESC", [], (err, rows) => { if (err) console.error(err); console.log("Notes:"); console.log(rows); db.all("SELECT * FROM sqlite_sequence", [], (err, seq) => { console.log("Sequences:"); console.log(seq); db.close(); }); });

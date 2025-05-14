@@ -1,3 +1,7 @@
+
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -8,85 +12,122 @@ const Tesseract = require('tesseract.js');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const mammoth = require('mammoth');
+const passport = require('passport');
+const session = require('express-session');
+const { OpenAI } = require('openai');
+
+// Import database and authentication modules
+const db = require('./db');
+const auth = require('./auth');
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5001;
 
 // Global cache for Ollama availability to prevent multiple checks
 let ollamaAvailabilityCache = {
-  available: null, // Will be set to true or false after first check
-  lastChecked: null, // Timestamp of last check
+  available: true, // Set to true since we're using OpenRouter API instead of local Ollama
+  lastChecked: Date.now(), 
   checkInterval: 5 * 60 * 1000 // Check again after 5 minutes
 };
 
 // Add this near the top of the file with other global variables
 const flashcardCache = new Map(); // Cache for generated flashcards
 
-// Function to get Ollama availability status (from cache if possible)
-async function getOllamaAvailability() {
-  const now = Date.now();
-  
-  // If we have a cached result that's still valid, use it
-  if (ollamaAvailabilityCache.available !== null && 
-      ollamaAvailabilityCache.lastChecked !== null &&
-      now - ollamaAvailabilityCache.lastChecked < ollamaAvailabilityCache.checkInterval) {
-    console.log(`Using cached Ollama availability: ${ollamaAvailabilityCache.available}`);
-    return ollamaAvailabilityCache.available;
-  }
-  
-  console.log('Checking Ollama availability...');
-  
+// OpenRouter API configuration
+const OPENROUTER_REFERER = process.env.OPENROUTER_REFERER || "http://localhost:3000";
+const OPENROUTER_SITE_NAME = process.env.OPENROUTER_SITE_NAME || "NoteNova";
+const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+
+// Debug configuration 
+console.log('OpenRouter configuration:');
+console.log('Referer:', OPENROUTER_REFERER);
+console.log('Site name:', OPENROUTER_SITE_NAME);
+console.log('Model:', OPENROUTER_MODEL);
+
+// Create direct axios instance for OpenRouter
+const openRouterClient = axios.create({
+  baseURL: 'https://openrouter.ai/api/v1',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+    'HTTP-Referer': OPENROUTER_REFERER,
+    'X-Title': OPENROUTER_SITE_NAME
+  },
+  timeout: 60000 // 60 seconds timeout
+});
+
+// Direct function to communicate with OpenRouter API
+async function callOpenRouter(messages, maxTokens = 1000, temperature = 0.7) {
   try {
-    // Try the base URL first for availability check
-    const response = await axios.get('http://localhost:11434', { 
-      timeout: 5000 // Increased timeout
+    const response = await openRouterClient.post('/chat/completions', {
+      model: OPENROUTER_MODEL,
+      messages: messages,
+      max_tokens: maxTokens,
+      temperature: temperature
     });
     
-    ollamaAvailabilityCache.available = true;
-    console.log('Ollama is running');
-    
-    // Try to check for the llama model
-    try {
-      const modelResponse = await axios.post('http://localhost:11434/api/tags', {}, {
-        timeout: 5000
-      });
-      
-      const modelsList = modelResponse.data?.models || [];
-      const hasLlama3 = modelsList.some(model => 
-        model.name === 'llama3' || 
-        model.name === 'llama3:latest' ||
-        model.name.includes('llama3')
-      );
-      
-      console.log(hasLlama3 
-        ? 'Successfully confirmed llama3 model is available' 
-        : 'Warning: llama3 model might not be available');
-    } catch (modelError) {
-      // Just log but don't affect availability
-      console.log('Could not verify model availability:', modelError.message);
+    if (response.data && 
+        response.data.choices && 
+        response.data.choices.length > 0 && 
+        response.data.choices[0].message) {
+      return response.data.choices[0].message.content;
     }
+    // Log the full response for debugging
+    console.error('OpenRouter API returned unexpected format:', JSON.stringify(response.data, null, 2));
+    // If the API returned an error message, surface it
+    if (response.data && response.data.error) {
+      throw new Error('OpenRouter API error: ' + response.data.error.message);
+    }
+    throw new Error('Invalid response format from OpenRouter API. Full response: ' + JSON.stringify(response.data));
   } catch (error) {
-    try {
-      // Try alternate Ollama API endpoint
-      const response = await axios.get('http://localhost:11434/api/version', { 
-        timeout: 5000
-      });
-      ollamaAvailabilityCache.available = true;
-      console.log('Ollama is running (verified with version endpoint)');
-    } catch (secondError) {
-      ollamaAvailabilityCache.available = false;
-      console.log(`Ollama not available: ${error.message}`);
+    // If the error is an Axios error with a response, log the full response
+    if (error.response) {
+      console.error('OpenRouter API error response:', JSON.stringify(error.response.data, null, 2));
+      if (error.response.data && error.response.data.error) {
+        throw new Error('OpenRouter API error: ' + error.response.data.error.message);
+      }
     }
+    console.error('OpenRouter API error:', error.message);
+    throw error;
   }
-  
-  ollamaAvailabilityCache.lastChecked = now;
-  return ollamaAvailabilityCache.available;
+}
+
+// Function to check if OpenRouter API is available
+async function getOllamaAvailability() {
+  try {
+    const response = await openRouterClient.get('/models');
+    if (response.status === 200) {
+      console.log('OpenRouter API is available');
+      // Verify our model is available
+      const models = response.data.data || [];
+      const modelExists = models.some(model => model.id === OPENROUTER_MODEL || model.id.includes('llama'));
+      if (!modelExists) {
+        console.warn('Requested model not found, but other models are available');
+      }
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('OpenRouter API test failed:', error.message);
+    return false;
+  }
 }
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// Set up session - needed for passport
+app.use(session({
+  secret: 'e7d3f8a2c9b5e6d1f3a7c8b4e5d2a9f6c3b8e5d7a2f4c9b3e6d1a8f5c2b7e4',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === 'production' }
+}));
+
+// Initialize passport
+app.use(passport.initialize());
 
 // Storage configuration for multer
 const storage = multer.diskStorage({
@@ -198,850 +239,950 @@ async function performOCR(imagePath) {
 
 // Helper function to generate tags using NLP
 function generateTags(text) {
-  // Simplified implementation - in a real app, use spaCy or other NLP
-  const commonKeywords = {
-    'biology': ['cell', 'photosynthesis', 'organism', 'evolution', 'dna'],
-    'chemistry': ['element', 'reaction', 'compound', 'acid', 'molecule'],
-    'physics': ['energy', 'force', 'motion', 'quantum', 'relativity'],
-    'mathematics': ['equation', 'theorem', 'algebra', 'calculus', 'geometry'],
-    'computer science': ['algorithm', 'database', 'programming', 'network', 'software']
-  };
+  const commonTags = [
+    { tag: 'computer science', keywords: ['algorithm', 'programming', 'code', 'data structure', 'software', 'database', 'web', 'network'] },
+    { tag: 'biology', keywords: ['cell', 'organism', 'species', 'evolution', 'dna', 'rna', 'protein', 'gene', 'ecology'] },
+    { tag: 'chemistry', keywords: ['reaction', 'molecule', 'atom', 'compound', 'element', 'periodic', 'acid', 'base', 'organic'] },
+    { tag: 'physics', keywords: ['force', 'energy', 'motion', 'quantum', 'relativity', 'particle', 'wave', 'mechanics', 'thermodynamics'] },
+    { tag: 'mathematics', keywords: ['equation', 'theorem', 'proof', 'calculus', 'algebra', 'geometry', 'statistics', 'probability'] },
+    { tag: 'history', keywords: ['war', 'revolution', 'century', 'ancient', 'medieval', 'empire', 'civilization', 'president', 'king'] },
+    { tag: 'literature', keywords: ['novel', 'poem', 'author', 'character', 'theme', 'plot', 'narrative', 'essay', 'fiction'] },
+    { tag: 'psychology', keywords: ['behavior', 'cognitive', 'therapy', 'mental', 'emotion', 'brain', 'consciousness', 'development'] },
+    { tag: 'economics', keywords: ['market', 'price', 'demand', 'supply', 'inflation', 'gdp', 'economy', 'trade', 'fiscal'] },
+    { tag: 'philosophy', keywords: ['ethics', 'metaphysics', 'epistemology', 'logic', 'existentialism', 'knowledge', 'reality'] },
+    { tag: 'art', keywords: ['painting', 'sculpture', 'artist', 'museum', 'gallery', 'composition', 'aesthetic', 'visual'] },
+    { tag: 'music', keywords: ['song', 'rhythm', 'melody', 'harmony', 'composer', 'instrument', 'chord', 'scale', 'tempo'] },
+    { tag: 'medicine', keywords: ['disease', 'treatment', 'symptom', 'diagnosis', 'patient', 'hospital', 'drug', 'surgery'] },
+    { tag: 'environmental science', keywords: ['climate', 'ecosystem', 'pollution', 'conservation', 'sustainability', 'renewable'] },
+    { tag: 'astronomy', keywords: ['planet', 'star', 'galaxy', 'universe', 'cosmic', 'solar', 'telescope', 'orbit', 'nebula'] },
+    { tag: 'geology', keywords: ['rock', 'mineral', 'earthquake', 'volcano', 'plate', 'tectonic', 'sediment', 'erosion'] },
+    { tag: 'political science', keywords: ['government', 'policy', 'election', 'democracy', 'constitution', 'law', 'rights'] },
+    { tag: 'sociology', keywords: ['society', 'culture', 'social', 'class', 'inequality', 'gender', 'race', 'ethnicity'] },
+    { tag: 'anthropology', keywords: ['culture', 'ritual', 'tradition', 'kinship', 'ethnography', 'archaeology', 'tribe'] },
+    { tag: 'linguistics', keywords: ['language', 'grammar', 'syntax', 'semantics', 'phonetics', 'dialect', 'morphology'] },
+    { tag: 'education', keywords: ['learning', 'teaching', 'student', 'school', 'curriculum', 'assessment', 'pedagogy'] },
+    { tag: 'computer network', keywords: ['tcp', 'ip', 'protocol', 'router', 'packet', 'ethernet', 'wifi', 'lan', 'wan'] },
+    { tag: 'data science', keywords: ['machine learning', 'ai', 'neural network', 'data mining', 'big data', 'analytics'] },
+    { tag: 'cybersecurity', keywords: ['encryption', 'authentication', 'firewall', 'malware', 'virus', 'hack', 'vulnerability'] },
+    { tag: 'dna', keywords: ['gene', 'allele', 'chromosome', 'genome', 'nucleotide', 'mutation', 'helix', 'replication'] },
+    { tag: 'cell', keywords: ['membrane', 'nucleus', 'mitochondria', 'organelle', 'cytoplasm', 'ribosome', 'golgi'] },
+    { tag: 'algorithm', keywords: ['sorting', 'search', 'complexity', 'recursive', 'optimization', 'graph', 'tree', 'dynamic'] },
+    { tag: 'database', keywords: ['sql', 'query', 'table', 'index', 'relational', 'nosql', 'schema', 'transaction', 'acid'] },
+    { tag: 'acid', keywords: ['ph', 'base', 'proton', 'hydrogen', 'acidity', 'hydroxide', 'buffer', 'neutralization'] }
+  ];
   
-  const tags = [];
+  // Convert to lowercase for case-insensitive matching
   const lowercaseText = text.toLowerCase();
   
-  // Check if any keywords are present in the text
-  Object.entries(commonKeywords).forEach(([category, keywords]) => {
-    if (keywords.some(keyword => lowercaseText.includes(keyword))) {
-      tags.push(category);
-      
-      // Add the specific keyword tags that were found
-      keywords.forEach(keyword => {
-        if (lowercaseText.includes(keyword)) {
-          tags.push(keyword);
-        }
-      });
-    }
-  });
+  // Check for each tag by looking for its keywords
+  const tags = [];
   
-  return [...new Set(tags)]; // Remove duplicates
+  for (const { tag, keywords } of commonTags) {
+    // Count how many keywords match
+    const matchCount = keywords.filter(keyword => 
+      lowercaseText.includes(keyword.toLowerCase())
+    ).length;
+    
+    // If at least 2 keywords match, add the tag
+    // For shorter tags like "dna", "cell", we only require 1 match
+    if ((keywords.length > 3 && matchCount >= 2) || 
+        (keywords.length <= 3 && matchCount >= 1)) {
+      tags.push(tag);
+    }
+  }
+  
+  return tags;
 }
 
-// Helper function to generate summary using Llama
+// Helper function to check if content is long enough for AI processing
+function isContentSufficientForAI(text) {
+  // Simple check for minimum content length
+  if (!text || text.trim().length < 100) {
+    return false;
+  }
+  return true;
+}
+
+// Helper function to generate summary using OpenRouter API
 async function generateSummary(text, isOllamaRunning = null) {
-  try {
-    // Clean and prepare the text
-    const cleanText = text
-      .replace(/<[^>]*>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    // If text is very short, just return it
-    if (cleanText.length < 200) {
-      return cleanText;
-    }
-    
-    // Get Ollama availability from cache if possible
-    if (isOllamaRunning === null) {
-      isOllamaRunning = await getOllamaAvailability();
-    }
-    
-    // If Ollama is not available, go to fallback immediately
-    if (!isOllamaRunning) {
-      throw new Error("Using fallback method");
-    }
-    
-    // Use the entire cleaned text for summary
-    const prompt = `
-    Summarize the following text in 3 to 4 concise, factual sentences. Do not include any introductory phrases or labels. Just output the summary directly.\n\nText to summarize:\n${cleanText}\n`;
-    
-    try {
-      const response = await axios.post('http://localhost:11434/api/generate', {
-        model: 'llama3',
-        prompt: prompt,
-        stream: false,
-        options: {
-          temperature: 0.2,
-          num_predict: 500 // Reduced to keep summary concise
-        }
-      }, {
-        timeout: 10000
-      });
-      
-      if (response.data && response.data.response) {
-        let summary = response.data.response.trim();
-        // Extract summary from within the first pair of quotes
-        const quoteMatch = summary.match(/"([^"]+)"/);
-        if (quoteMatch && quoteMatch[1]) {
-          summary = quoteMatch[1].trim();
-        } else {
-          // Remove any leading summary phrases (robust)
-          summary = summary.replace(/^(here(\s+is)?(\s+a)?(\s+brief)?(\s+summary)?(\s+of)?(\s+the)?(\s+text)?(\s+in)?(\s+exactly)?(\s*\d*-?\d*\s*sentences)?\s*:?\s*)/i, '');
-          summary = summary.replace(/^summary(\s*\(.*?\))?:?/i, '').trim();
-        }
-        // Ensure proper sentence endings
-        if (!summary.endsWith('.')) {
-          summary += '.';
-        }
-        // Split into sentences and take first 4
-        const sentences = summary.split(/[.!?]+/).filter(s => s.trim().length > 0);
-        if (sentences.length > 4) {
-          summary = sentences.slice(0, 4).join('. ') + '.';
-        }
-        return summary;
-      }
-    } catch (error) {
-      console.error('Error generating summary:', error.message);
-      throw new Error("Fallback to basic extraction");
-    }
-    
-    // Fallback to basic extraction
-    throw new Error("Fallback to basic extraction");
-    
-  } catch (error) {
-    // Fallback to basic extraction in case of error
-    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
-    if (sentences.length <= 3) {
-      return text;
-    }
-    return sentences.slice(0, 3).join('. ') + '.';
+  // If text is too short, just return a default message
+  if (!isContentSufficientForAI(text)) {
+    return 'No summary generated (content too short).';
   }
+  
+  // Try to generate summary with OpenRouter API
+  let summary = '';
+  
+  try {
+    console.log('Generating summary with OpenRouter API...');
+    
+    const prompt = `Write a concise 3-4 sentence summary of the main content and key findings in this document. Focus exclusively on the substantive information, core arguments, or primary conclusions.\n\nIMPORTANT: Do NOT begin with phrases like "Here is a summary" or "This document". Start directly with the key points.\n\nDocument:\n${text.slice(0, 4000)}`; // Limit to 4000 chars for the model
+    
+    console.log('Using OpenRouter model:', OPENROUTER_MODEL);
+    
+    // Using direct axios call instead of OpenAI client
+    summary = await callOpenRouter([
+      { role: "user", content: prompt }
+    ], 1000, 0.5);
+    
+    // Remove any leading phrases like "Here is a summary..."
+    summary = summary.replace(/^(here is|this is|this document provides|this summary presents|below is|following is).*?summary[^.]*\./i, '').trim();
+    // Also remove phrases like "In summary," at the beginning
+    summary = summary.replace(/^in summary,?\s*/i, '').trim();
+    // Also remove phrases like "To summarize," at the beginning
+    summary = summary.replace(/^to summarize,?\s*/i, '').trim();
+    // Capitalize the first letter if needed
+    if (summary.length > 0) {
+      summary = summary.charAt(0).toUpperCase() + summary.slice(1);
+    }
+    
+    console.log('Successfully generated summary with OpenRouter API');
+  } catch (error) {
+    console.error('Error generating summary with OpenRouter API:', error.message);
+    console.error('Error details:', error);
+    // If OpenRouter API fails, do not use fallback, just throw error
+    throw new Error('Failed to generate summary with Meta: Llama 3.3 70B Instruct (free). Please try again later.');
+  }
+  
+  return summary;
 }
 
-// Helper function to generate flashcards using Llama
+// Helper function for flashcard generation using OpenRouter API
 async function generateFlashcardsWithLlama(noteContent, noteTitle, noteTags, isOllamaRunning = null, forceRegenerate = false) {
+  // Check if content is sufficient
+  if (!isContentSufficientForAI(noteContent)) {
+    throw new Error('Content is too short for flashcard generation');
+  }
+
+  // Create a cache key based on the note content
+  const cacheKey = Buffer.from(noteContent).toString('base64').substring(0, 50);
+  
+  // Check cache first (unless force regenerate is true)
+  if (!forceRegenerate && flashcardCache.has(cacheKey)) {
+    console.log('Using cached flashcards');
+    return flashcardCache.get(cacheKey);
+  }
+  
   try {
-    // Check cache first if not forcing regeneration
-    if (!forceRegenerate && flashcardCache.has(noteTitle)) {
-      console.log('Returning cached flashcards for:', noteTitle);
-      return flashcardCache.get(noteTitle);
+    // Prepare a prompt for the OpenRouter API
+    const tagsInfo = noteTags && noteTags.length > 0 
+      ? `The note is tagged with: ${noteTags.join(', ')}.` 
+      : '';
+    
+    // Using the user's suggested prompt
+    const prompt = `Generate as many flashcards as possible from the following text. Each flashcard must have a clear question and a VERY CONCISE answer (preferably 1-2 sentences maximum). Focus on key facts, definitions, processes, or important concepts.\n\nIMPORTANT GUIDELINES:\n- Keep answers brief and to the point - no longer than 2 sentences when possible\n- Make each answer focused on a single concept or fact\n- Avoid lengthy explanations or examples\n- Questions should be specific and direct\n- Answers should be factual and precise\n\nPREFERRED FORMAT:\n[\n  {\n    "question": "What is X?",\n    "answer": "X is Y. It has properties Z."\n  },\n  ...\n]\n\nNote title: ${noteTitle || "Untitled Note"}\n${tagsInfo}\n\nContent:\n${noteContent.slice(0, 5000)}`; // Limit content length to avoid token limits
+    
+    console.log('Generating flashcards with OpenRouter API...');
+    console.log('Using OpenRouter model:', OPENROUTER_MODEL);
+    
+    // First verify API availability with quick test
+    const testResult = await getOllamaAvailability();
+    if (!testResult) {
+      throw new Error('OpenRouter API unavailable. Cannot generate flashcards.');
     }
-
-    if (isOllamaRunning === null) {
-      isOllamaRunning = await getOllamaAvailability();
-    }
     
-    if (!isOllamaRunning) {
-      console.log('Ollama is not available, skipping Llama flashcard generation');
-      return null;
-    }
+    // Use direct axios request instead of OpenAI client
+    const responseText = await callOpenRouter([
+      { role: "user", content: prompt }
+    ], 2000, 0.3);
     
-    console.log('Attempting to generate flashcards with llama3:latest...');
+    console.log('OpenRouter API flashcard response text:', responseText);
     
-    // Clean and prepare the text
-    const cleanText = noteContent
-      .replace(/<[^>]*>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Extract flashcards from the response text
+    const flashcards = extractFlashcardsFromResponse(responseText, noteTitle);
     
-    // Split content into smaller chunks to process more thoroughly
-    const paragraphs = cleanText.split(/\n\n+/).filter(p => p.trim().length > 0);
-    const allFlashcards = [];
-    
-    // Process each paragraph separately to get more focused flashcards
-    for (const paragraph of paragraphs) {
-      if (paragraph.trim().length < 20) continue;
+    if (flashcards.length > 0) {
+      console.log(`Successfully extracted ${flashcards.length} flashcards`);
       
-      const prompt = `
-      Generate as many flashcards as possible from the following text. Each flashcard should have a clear question and a concise answer. Focus on key facts, definitions, processes, or important concepts.
-
-      Guidelines:
-      - Create a flashcard for EVERY important point, concept, or definition
-      - Questions should be specific and test understanding of individual concepts
-      - Answers should be detailed but concise
-      - Focus on key terms, definitions, relationships, and important details
-      - Make sure questions and answers are factually accurate based on the text
-      - Format each flashcard as "Q: [question]" on one line followed by "A: [answer]" on the next line
-      - Separate each flashcard with a blank line
-      - Create as many flashcards as needed to cover ALL important points
-      - Don't skip any important information - create a flashcard for each significant detail
-
-      Text to create flashcards from:
-      ${paragraph}
-
-      Generate the flashcards now, with each in the format:
-      Q: [Question]
-      A: [Answer]
-      `;
-      
-      try {
-        console.log('Attempting to generate flashcards with llama3:latest...');
-        const response = await axios.post('http://localhost:11434/api/generate', {
-          model: 'llama3:latest',
-          prompt: prompt,
-          stream: false,
-          options: {
-            temperature: 0.2,
-            num_predict: 2000
+      // Convert the format to match what the frontend expects
+      const formattedFlashcards = {
+        notes: flashcards.map((card, index) => {
+          // Clean up question text - remove any "Question:" prefix
+          let question = card.question;
+          if (question.includes("Question:")) {
+            question = question.split("Question:")[1].trim();
           }
-        }, {
-          timeout: 60000
-        });
-        
-        if (response.data && response.data.response) {
-          console.log('Successfully received response from llama3:latest');
-          const flashcardsText = response.data.response.trim();
-          console.log('Raw response:', flashcardsText);
           
-          // Split by double newlines and filter for valid Q/A pairs
-          const flashcardPairs = flashcardsText
-            .split(/\n\s*\n/)
-            .filter(pair => {
-              const hasQuestion = pair.includes('Q:') || pair.includes('Question:');
-              const hasAnswer = pair.includes('A:') || pair.includes('Answer:');
-              return hasQuestion && hasAnswer;
-            });
+          // Clean up answer text - remove any "Answer:" prefix
+          let answer = card.answer;
+          if (answer.includes("Answer:")) {
+            answer = answer.split("Answer:")[1].trim();
+          }
           
-          console.log(`Found ${flashcardPairs.length} potential flashcard pairs`);
-          
-          const paragraphCards = flashcardPairs.map((pair, index) => {
-            // Try different question patterns
-            const questionMatch = pair.match(/(?:Q:|Question:)\s*(.*?)(?=\n|$)/s) || 
-                                pair.match(/^([^A:]+?)(?=\n|$)/s);
-            const answerMatch = pair.match(/(?:A:|Answer:)\s*(.*?)(?=\n|$)/s) || 
-                              pair.match(/\n([^Q:]+?)(?=\n|$)/s);
-            
-            const question = questionMatch ? questionMatch[1].trim() : 'Question not found';
-            const answer = answerMatch ? answerMatch[1].trim() : 'Answer not found';
-            
-            console.log(`Processing card ${index + 1}:`);
-            console.log('Question:', question);
-            console.log('Answer:', answer);
-            
-            return {
-              deckName: `Notes - ${noteTitle}`,
-              modelName: "Basic",
-              fields: {
-                Front: question,
-                Back: answer
-              },
-              tags: noteTags || []
-            };
-          }).filter(card => 
-            card.fields.Front !== 'Question not found' && 
-            card.fields.Back !== 'Answer not found' &&
-            card.fields.Front.length > 0 &&
-            card.fields.Back.length > 0
-          );
-          
-          console.log(`Successfully processed ${paragraphCards.length} valid flashcards`);
-          allFlashcards.push(...paragraphCards);
-        } else {
-          console.log('No response data received from llama3:latest');
-        }
-      } catch (error) {
-        console.error('Error processing paragraph:', error.message);
-        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-          console.log('Timeout occurred, trying with smaller chunk...');
-          const sentences = paragraph.split(/[.!?]+/).filter(s => s.trim().length > 0);
-          const halfLength = Math.ceil(sentences.length / 2);
-          const firstHalf = sentences.slice(0, halfLength).join('. ') + '.';
-          const secondHalf = sentences.slice(halfLength).join('. ') + '.';
-          
-          // Process first half
-          if (firstHalf.length > 20) {
-            try {
-              console.log('Processing first half of paragraph...');
-              const firstResponse = await axios.post('http://localhost:11434/api/generate', {
-                model: 'llama3:latest',
-                prompt: prompt.replace(paragraph, firstHalf),
-                stream: false,
-                options: {
-                  temperature: 0.2,
-                  num_predict: 1000
-                }
-              }, {
-                timeout: 30000
-              });
-              
-              if (firstResponse.data && firstResponse.data.response) {
-                const flashcardsText = firstResponse.data.response.trim();
-                console.log('First half response:', flashcardsText);
-                
-                const flashcardPairs = flashcardsText
-                  .split(/\n\s*\n/)
-                  .filter(pair => {
-                    const hasQuestion = pair.includes('Q:') || pair.includes('Question:');
-                    const hasAnswer = pair.includes('A:') || pair.includes('Answer:');
-                    return hasQuestion && hasAnswer;
-                  });
-                
-                const paragraphCards = flashcardPairs.map((pair, index) => {
-                  const questionMatch = pair.match(/(?:Q:|Question:)\s*(.*?)(?=\n|$)/s) || 
-                                      pair.match(/^([^A:]+?)(?=\n|$)/s);
-                  const answerMatch = pair.match(/(?:A:|Answer:)\s*(.*?)(?=\n|$)/s) || 
-                                    pair.match(/\n([^Q:]+?)(?=\n|$)/s);
-                  
-                  const question = questionMatch ? questionMatch[1].trim() : 'Question not found';
-                  const answer = answerMatch ? answerMatch[1].trim() : 'Answer not found';
-                  
-                  return {
-                    deckName: `Notes - ${noteTitle}`,
-                    modelName: "Basic",
-                    fields: {
-                      Front: question,
-                      Back: answer
-                    },
-                    tags: noteTags || []
-                  };
-                }).filter(card => 
-                  card.fields.Front !== 'Question not found' && 
-                  card.fields.Back !== 'Answer not found' &&
-                  card.fields.Front.length > 0 &&
-                  card.fields.Back.length > 0
-                );
-                
-                allFlashcards.push(...paragraphCards);
-              }
-            } catch (innerError) {
-              console.error('Error processing first half:', innerError.message);
+          // Truncate overly long answers
+          if (answer.length > 150) {
+            // Try to find a sentence break
+            const sentenceBreak = answer.indexOf('. ', 100);
+            if (sentenceBreak > 0 && sentenceBreak < 150) {
+              answer = answer.substring(0, sentenceBreak + 1);
+            } else {
+              // Just truncate at 150 chars if no good sentence break
+              answer = answer.substring(0, 150) + '...';
             }
           }
-          
-          // Process second half
-          if (secondHalf.length > 20) {
-            try {
-              console.log('Processing second half of paragraph...');
-              const secondResponse = await axios.post('http://localhost:11434/api/generate', {
-                model: 'llama3:latest',
-                prompt: prompt.replace(paragraph, secondHalf),
-                stream: false,
-                options: {
-                  temperature: 0.2,
-                  num_predict: 1000
-                }
-              }, {
-                timeout: 30000
-              });
-              
-              if (secondResponse.data && secondResponse.data.response) {
-                const flashcardsText = secondResponse.data.response.trim();
-                console.log('Second half response:', flashcardsText);
-                
-                const flashcardPairs = flashcardsText
-                  .split(/\n\s*\n/)
-                  .filter(pair => {
-                    const hasQuestion = pair.includes('Q:') || pair.includes('Question:');
-                    const hasAnswer = pair.includes('A:') || pair.includes('Answer:');
-                    return hasQuestion && hasAnswer;
-                  });
-                
-                const paragraphCards = flashcardPairs.map((pair, index) => {
-                  const questionMatch = pair.match(/(?:Q:|Question:)\s*(.*?)(?=\n|$)/s) || 
-                                      pair.match(/^([^A:]+?)(?=\n|$)/s);
-                  const answerMatch = pair.match(/(?:A:|Answer:)\s*(.*?)(?=\n|$)/s) || 
-                                    pair.match(/\n([^Q:]+?)(?=\n|$)/s);
-                  
-                  const question = questionMatch ? questionMatch[1].trim() : 'Question not found';
-                  const answer = answerMatch ? answerMatch[1].trim() : 'Answer not found';
-                  
-                  return {
-                    deckName: `Notes - ${noteTitle}`,
-                    modelName: "Basic",
-                    fields: {
-                      Front: question,
-                      Back: answer
-                    },
-                    tags: noteTags || []
-                  };
-                }).filter(card => 
-                  card.fields.Front !== 'Question not found' && 
-                  card.fields.Back !== 'Answer not found' &&
-                  card.fields.Front.length > 0 &&
-                  card.fields.Back.length > 0
-                );
-                
-                allFlashcards.push(...paragraphCards);
-              }
-            } catch (innerError) {
-              console.error('Error processing second half:', innerError.message);
-            }
-          }
-        }
-        continue;
-      }
-    }
-    
-    if (allFlashcards.length > 0) {
-      const result = {
-        deckName: `Notes - ${noteTitle}`,
-        notes: allFlashcards,
-        generatedAt: new Date().toISOString()
-      };
-      
-      // Cache the result
-      flashcardCache.set(noteTitle, result);
-      
-      console.log(`Successfully created ${allFlashcards.length} flashcards using llama3:latest`);
-      return result;
-    }
-    
-    console.log('No valid flashcards could be generated, falling back to basic method');
-    return null;
-    
-  } catch (error) {
-    console.error('Error generating flashcards with Llama:', error.message);
-    return null;
-  }
-}
-
-// API Endpoints
-
-// Upload endpoint
-app.post('/api/upload', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    const filePath = req.file.path;
-    const fileType = path.extname(filePath).toLowerCase();
-    
-    let extractedText = '';
-    
-    if (fileType === '.pdf') {
-      try {
-        extractedText = await extractTextFromPDF(filePath);
-        
-        // If PDF appears to be scanned (very little text extracted), perform OCR
-        if (extractedText.length < 100) {
-          extractedText = await performOCR(filePath);
-        }
-      } catch (err) {
-        return res.status(400).json({ error: `Failed to process PDF file: ${err.message}` });
-      }
-    } else if (fileType === '.txt') {
-      try {
-        extractedText = fs.readFileSync(filePath, 'utf8');
-      } catch (err) {
-        return res.status(400).json({ error: `Failed to read text file: ${err.message}` });
-      }
-    } else if (fileType === '.docx') {
-      try {
-        extractedText = await extractTextFromDOCX(filePath);
-      } catch (err) {
-        return res.status(400).json({ error: `Failed to process Word document: ${err.message}` });
-      }
-    } else {
-      return res.status(400).json({ error: `Unsupported file format: ${fileType}` });
-    }
-    
-    // Check if we got any meaningful text content
-    if (!extractedText || extractedText.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'No text could be extracted from the file. Please check if the file is corrupted or password protected.'
-      });
-    }
-    
-    // Process the extracted text
-    const tags = generateTags(extractedText);
-    const summary = await generateSummary(extractedText);
-    
-    // Create a new note object
-    const newNote = {
-      id: Date.now().toString(),
-      title: req.file.originalname.replace(/\.[^/.]+$/, ""), // Remove file extension
-      content: extractedText,
-      tags,
-      summary,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    // Save to our in-memory database
-    notesDatabase.push(newNote);
-    
-    // Also save to a file for persistence
-    fs.writeFileSync(
-      path.join(notesDir, `${newNote.id}.json`),
-      JSON.stringify(newNote, null, 2)
-    );
-    
-    res.status(200).json({ 
-      message: 'File processed successfully',
-      note: newNote
-    });
-    
-  } catch (error) {
-    console.error('Error processing file:', error);
-    res.status(500).json({ error: `Error processing file: ${error.message}` });
-  } finally {
-    // Clean up the uploaded file to avoid taking up disk space
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (err) {
-        console.error('Failed to remove temporary uploaded file:', err);
-      }
-    }
-  }
-});
-
-// Get all notes
-app.get('/api/notes', (req, res) => {
-  res.json(notesDatabase);
-});
-
-// Get note by ID
-app.get('/api/notes/:id', (req, res) => {
-  const note = notesDatabase.find(note => note.id === req.params.id);
-  
-  if (!note) {
-    return res.status(404).json({ error: 'Note not found' });
-  }
-  
-  res.json(note);
-});
-
-// Update note
-app.put('/api/notes/:id', (req, res) => {
-  const { title, content, tags } = req.body;
-  const noteIndex = notesDatabase.findIndex(note => note.id === req.params.id);
-  
-  if (noteIndex === -1) {
-    return res.status(404).json({ error: 'Note not found' });
-  }
-  
-  // Update the note
-  notesDatabase[noteIndex] = {
-    ...notesDatabase[noteIndex],
-    title: title || notesDatabase[noteIndex].title,
-    content: content || notesDatabase[noteIndex].content,
-    tags: tags || notesDatabase[noteIndex].tags,
-    updatedAt: new Date().toISOString()
-  };
-  
-  // Update the file for persistence
-  fs.writeFileSync(
-    path.join(notesDir, `${notesDatabase[noteIndex].id}.json`),
-    JSON.stringify(notesDatabase[noteIndex], null, 2)
-  );
-  
-  res.json(notesDatabase[noteIndex]);
-});
-
-// Delete note
-app.delete('/api/notes/:id', (req, res) => {
-  const noteIndex = notesDatabase.findIndex(note => note.id === req.params.id);
-  
-  if (noteIndex === -1) {
-    return res.status(404).json({ error: 'Note not found' });
-  }
-  
-  // Remove from memory
-  const deletedNote = notesDatabase.splice(noteIndex, 1)[0];
-  
-  // Remove the file
-  const notePath = path.join(notesDir, `${deletedNote.id}.json`);
-  if (fs.existsSync(notePath)) {
-    fs.unlinkSync(notePath);
-  }
-  
-  res.json({ message: 'Note deleted', noteId: req.params.id });
-});
-
-// Search notes
-app.get('/api/search', (req, res) => {
-  const { query, tags } = req.query;
-  
-  let results = [...notesDatabase];
-  
-  // Filter by search query
-  if (query) {
-    const lowercaseQuery = query.toLowerCase();
-    results = results.filter(note => 
-      note.title.toLowerCase().includes(lowercaseQuery) ||
-      note.content.toLowerCase().includes(lowercaseQuery) ||
-      note.summary.toLowerCase().includes(lowercaseQuery) ||
-      note.tags.some(tag => tag.toLowerCase().includes(lowercaseQuery))
-    );
-  }
-  
-  // Filter by tags
-  if (tags) {
-    const tagList = tags.split(',').map(tag => tag.trim().toLowerCase());
-    results = results.filter(note => 
-      note.tags.some(tag => tagList.includes(tag.toLowerCase()))
-    );
-  }
-  
-  res.json(results);
-});
-
-// Export notes as flashcards (Anki format)
-app.get('/api/notes/:id/flashcards', async (req, res) => {
-  try {
-    const note = notesDatabase.find(note => note.id === req.params.id);
-    const forceRegenerate = req.query.regenerate === 'true';
-    
-    if (!note) {
-      return res.status(404).json({ error: 'Note not found' });
-    }
-    
-    if (!note.content || note.content.trim().length === 0) {
-      return res.status(400).json({ error: 'Note has no content to generate flashcards' });
-    }
-    
-    // Check cache first if not forcing regeneration
-    if (!forceRegenerate && flashcardCache.has(note.title)) {
-      console.log('Returning cached flashcards for:', note.title);
-      return res.json({
-        ...flashcardCache.get(note.title),
-        generatedBy: 'llama',
-        canRegenerate: true
-      });
-    }
-    
-    const isOllamaRunning = await getOllamaAvailability();
-    
-    if (isOllamaRunning) {
-      try {
-        const ankiDeck = await generateFlashcardsWithLlama(
-          note.content, 
-          note.title, 
-          note.tags, 
-          isOllamaRunning,
-          forceRegenerate
-        );
-        
-        if (ankiDeck && ankiDeck.notes && ankiDeck.notes.length > 0) {
-          return res.json({
-            ...ankiDeck,
-            generatedBy: 'llama',
-            canRegenerate: true
-          });
-        }
-      } catch (llamaError) {
-        console.error('Error generating flashcards with Llama:', llamaError);
-      }
-    }
-    
-    // Preprocess content to be better organized
-    let preprocessedContent = note.content
-      .replace(/<[^>]*>/g, '') // Remove HTML tags
-      .replace(/\r\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    
-    // Split content into paragraphs while preserving original formatting
-    const paragraphs = preprocessedContent.split(/\n\n+/)
-      .map(p => p.trim())
-      .filter(p => p.length > 0);
-    
-    // Find potential definitions (Key term: definition format)
-    const definitions = [];
-    const keyTermPattern = /^([A-Z][A-Za-z0-9\s\-]+):\s*(.+)$/;
-    const bulletPointPattern = /^[•\-*]\s*([A-Z][A-Za-z0-9\s\-]+):\s*(.+)$/;
-    
-    paragraphs.forEach(paragraph => {
-      // Check for paragraph-level definitions
-      const definitionMatch = paragraph.match(keyTermPattern);
-      if (definitionMatch) {
-        definitions.push({
-          term: definitionMatch[1].trim(),
-          definition: definitionMatch[2].trim()
-        });
-      }
-      
-      // Check for bulleted lists with definitions
-      paragraph.split('\n').forEach(line => {
-        const bulletMatch = line.match(bulletPointPattern);
-        if (bulletMatch) {
-          definitions.push({
-            term: bulletMatch[1].trim(),
-            definition: bulletMatch[2].trim()
-          });
-        }
-      });
-    });
-    
-    // Process content into sentences for concept-based flashcards
-    const sentences = [];
-    paragraphs.forEach(paragraph => {
-      // Keep paragraphs intact to preserve formatting
-      const paragraphSentences = paragraph
-        .split(/(?<=[.!?])\s+/)
-        .map(sentence => sentence.trim())
-        .filter(sentence => sentence.length > 0); // Accept any non-empty sentence
-      
-      sentences.push(...paragraphSentences);
-    });
-    
-    // Create definition flashcards from the extracted definitions
-    const definitionCards = definitions.map((def, index) => {
-      return {
-        id: `${note.id}-def-${index}`,
-        noteId: note.id,
-        front: `What is ${def.term}?`,
-        back: def.definition,
-        tags: [...(note.tags || []), 'definition']
-      };
-    });
-    
-    // If no definitions found, create basic flashcards from sentences
-    let allCards = [...definitionCards];
-    
-    // If we don't have enough cards, add basic flashcards from sentences
-    if (allCards.length < 5 && sentences.length > 0) {
-      // Use any sentence that's at least 5 characters long
-      const basicCards = sentences
-        .filter(sentence => sentence.length >= 5)
-        .slice(0, 10)
-        .map((sentence, index) => {
-          const words = sentence.split(' ');
-          const halfLength = Math.max(1, Math.floor(words.length / 2));
           
           return {
-            id: `${note.id}-basic-${index}`,
-            noteId: note.id,
-            front: words.length > 1 ? `${words.slice(0, halfLength).join(' ')}...?` : `${sentence}?`,
-            back: sentence,
-            tags: [...(note.tags || []), 'basic']
+            fields: {
+              Front: question,
+              Back: answer
+            },
+            tags: noteTags || []
           };
+        })
+      };
+      
+      // Cache the results
+      flashcardCache.set(cacheKey, formattedFlashcards);
+      
+      return formattedFlashcards;
+    }
+    
+    console.log('No valid flashcards returned from the model.');
+    throw new Error('Failed to generate flashcards with Meta: Llama 3.3 70B Instruct (free). Please try again later.');
+    
+  } catch (error) {
+    console.error('Error generating flashcards with OpenRouter API:', error.message);
+    // Do not use fallback method, just throw error
+    throw new Error('Failed to generate flashcards with Meta: Llama 3.3 70B Instruct (free). Please try again later.');
+  }
+}
+
+// Helper function to extract main concept from a sentence
+function extractMainConcept(sentence, title) {
+  // Try to extract a noun phrase
+  const nouns = sentence.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g) || [];
+  
+  for (const noun of nouns) {
+    if (noun.length > 3 && !['The', 'This', 'That', 'These', 'Those'].includes(noun)) {
+      return noun;
+    }
+  }
+  
+  // If we can't find a proper noun, look for important terms
+  const words = sentence.split(' ');
+  const longWords = words.filter(w => w.length > 6).map(w => w.replace(/[^\w]/g, ''));
+  
+  if (longWords.length > 0) {
+    return longWords[0];
+  }
+  
+  // Default to the title or part of the sentence
+  return title || sentence.substring(0, 20) + '...';
+}
+
+// Helper function to extract main topic as best as possible
+function extractMainTopic(content, title) {
+  if (title && title.length > 3 && !title.match(/^[0-9\s]+$/)) {
+    return title;
+  }
+  
+  // Try to extract from first paragraph
+  const firstPara = content.split(/\n\s*\n/)[0] || '';
+  const cleanPara = firstPara.replace(/<[^>]*>/g, '').trim();
+  
+  if (cleanPara.length > 20) {
+    return cleanPara.substring(0, 100) + (cleanPara.length > 100 ? '...' : '');
+  }
+  
+  // Fallback
+  return "Review the full note content to understand the main topic.";
+}
+
+// Helper function to extract key concepts
+function extractKeyConcepts(content, title) {
+  const conceptList = [];
+  
+  // Try to get concepts from headers
+  const headerMatches = content.match(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/g);
+  if (headerMatches && headerMatches.length > 0) {
+    for (const headerMatch of headerMatches.slice(0, 3)) {
+      const headerText = headerMatch.replace(/<[^>]*>/g, '').trim();
+      if (headerText && headerText.length > 3) {
+        conceptList.push(headerText);
+      }
+    }
+  }
+  
+  // Try to get concepts from bold/strong text
+  const boldMatches = content.match(/<strong>(.*?)<\/strong>|<b>(.*?)<\/b>|\*\*(.*?)\*\*/g);
+  if (boldMatches && boldMatches.length > 0) {
+    for (const boldMatch of boldMatches.slice(0, 5)) {
+      const boldText = boldMatch.replace(/<[^>]*>/g, '').replace(/\*\*/g, '').trim();
+      if (boldText && boldText.length > 3 && !conceptList.includes(boldText)) {
+        conceptList.push(boldText);
+      }
+    }
+  }
+  
+  if (conceptList.length > 0) {
+    return `Key concepts include: ${conceptList.join(', ')}.`;
+  }
+  
+  // Fallback
+  return "Review the note in detail to identify and understand the key concepts covered.";
+}
+
+// Helper function to extract flashcards from the model response
+function extractFlashcardsFromResponse(text, noteTitle) {
+  let flashcards = [];
+  console.log('Extracting flashcards from text length:', text.length);
+  
+  // Try to extract JSON array first (ideal case)
+  try {
+    const jsonMatch = text.match(/\[[\s\S]*?\]/g);
+    if (jsonMatch && jsonMatch.length > 0) {
+      // Try parsing each JSON array found (might be multiple in sectioned response)
+      for (const extractedJson of jsonMatch) {
+        try {
+          const parsedCards = JSON.parse(extractedJson);
+          
+          if (Array.isArray(parsedCards) && parsedCards.length > 0 && 
+              parsedCards.every(card => card.question && card.answer)) {
+            // Filter out generic "Flashcard X?" type questions
+            const validCards = parsedCards.filter(card => 
+              !card.question.match(/^flashcard\s+\d+\??$/i) && 
+              card.question.length > 5
+            );
+            
+            if (validCards.length > 0) {
+              console.log(`Successfully extracted ${validCards.length} JSON flashcards`);
+              return validCards;
+            }
+          }
+        } catch (parseErr) {
+          // Continue to the next match if one fails
+          console.log(`JSON parse error on match: ${parseErr.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.log('JSON extraction failed, trying alternative methods');
+  }
+  
+  // Try to extract from sectioned format with JSON embedded in each section
+  if (text.includes('**Section') && text.includes('{')) {
+    console.log('Trying section-with-json extraction');
+    
+    const sectionPattern = /\*\*Section.*?\*\*[\s\n]*([\s\S]*?)(?=\*\*Section|$)/g;
+    const sectionMatches = [...text.matchAll(sectionPattern)];
+    
+    if (sectionMatches && sectionMatches.length > 0) {
+      for (const sectionMatch of sectionMatches) {
+        const sectionContent = sectionMatch[1];
+        
+        // Look for JSON objects in the section
+        const jsonObjectPattern = /\d+\.\s*({[\s\S]*?})/g;
+        const jsonObjects = [...sectionContent.matchAll(jsonObjectPattern)];
+        
+        for (const jsonObj of jsonObjects) {
+          try {
+            const card = JSON.parse(jsonObj[1]);
+            if (card.question && card.answer) {
+              flashcards.push(card);
+            }
+          } catch (e) {
+            // Continue if one object fails
+          }
+        }
+      }
+      
+      if (flashcards.length > 0) {
+        console.log(`Successfully extracted ${flashcards.length} sectioned JSON flashcards`);
+        return flashcards;
+      }
+    }
+  }
+  
+  // New pattern for formatted numbered flashcards with sections (like in the example response)
+  // This pattern matches items like "1. **What is X?** * Answer text" 
+  const sectionPattern = /(\d+\.\s+\*\*.*?\*\*[\s\n]*[\*•].*?)(?=\d+\.\s+\*\*|$)/gs;
+  const sectionMatches = [...text.matchAll(sectionPattern)];
+  
+  if (sectionMatches && sectionMatches.length > 0) {
+    console.log(`Found ${sectionMatches.length} section-style flashcards`);
+    
+    for (const match of sectionMatches) {
+      const cardText = match[1].trim();
+      // Extract question (between ** **)
+      const questionMatch = cardText.match(/\d+\.\s+\*\*(.*?)\*\*/);
+      // Extract answer (after the bullet point)
+      const answerMatch = cardText.match(/[\*•](.*?)$/s);
+      
+      if (questionMatch && answerMatch) {
+        const question = questionMatch[1].trim();
+        const answer = answerMatch[1].trim();
+        
+        if (question.length > 3 && answer.length > 3) {
+          flashcards.push({
+            question: question,
+            answer: answer
+          });
+        }
+      }
+    }
+    
+    if (flashcards.length > 0) return flashcards;
+  }
+  
+  // Try to extract numbered Q/A pairs (common format from LLMs)
+  const numberedFormat = /(\d+[\.\)]\s+(?:\*\*)?.*?(?:\*\*)?)(?:\s*[\*\-•])?\s*(.*?)(?=\d+[\.\)]|$)/gs;
+  const numberedMatches = [...text.matchAll(numberedFormat)];
+  
+  if (numberedMatches && numberedMatches.length > 0) {
+    console.log(`Found ${numberedMatches.length} numbered-style flashcards`);
+    
+    for (const match of numberedMatches) {
+      // Clean up the question (remove numbers, asterisks)
+      const rawQuestion = match[1].trim();
+      const question = rawQuestion
+        .replace(/^\d+[\.\)]\s+/, '') // Remove numbering
+        .replace(/\*\*/g, '')         // Remove markdown bold
+        .trim();
+      
+      // Clean up the answer
+      const answer = match[2].trim();
+      
+      if (question.length > 3 && question.includes('?') && answer.length > 3) {
+        flashcards.push({
+          question: question,
+          answer: answer
         });
+      }
+    }
+    
+    if (flashcards.length > 0) return flashcards;
+  }
+  
+  // Try to extract Q&A style entries in the format "What is X? X is Y."
+  const qaRegex = /([^.!?]+\?)\s*([^?]+?)(?=\n|$|[A-Z][^.!?]+\?)/g;
+  const qaMatches = [...text.matchAll(qaRegex)];
+  
+  if (qaMatches && qaMatches.length > 0) {
+    console.log(`Found ${qaMatches.length} Q&A-style flashcards`);
+    
+    for (const match of qaMatches) {
+      const question = match[1].trim();
+      const answer = match[2].trim();
       
-      allCards.push(...basicCards);
+      if (question.length > 5 && answer.length > 3) {
+        flashcards.push({
+          question: question,
+          answer: answer
+        });
+      }
     }
     
-    // If still no cards were created, create generic ones from the title
-    if (allCards.length === 0 && note.title) {
-      allCards.push({
-        id: `${note.id}-title-1`,
-        noteId: note.id,
-        front: `What is ${note.title}?`,
-        back: preprocessedContent.length > 100 ? preprocessedContent.slice(0, 100) + '...' : preprocessedContent,
-        tags: [...(note.tags || []), 'title']
-      });
+    if (flashcards.length > 0) return flashcards;
+  }
+
+  // Try multi-line format with "Question:" and "Answer:" prefixes
+  const multiLineFormat = /(?:Question|Q):\s*(.*?)\s*(?:Answer|A):\s*(.*?)(?=(?:Question|Q):|$)/gis;
+  const multiLineMatches = [...text.matchAll(multiLineFormat)];
+  
+  if (multiLineMatches && multiLineMatches.length > 0) {
+    console.log(`Found ${multiLineMatches.length} explicit Q/A format flashcards`);
+    
+    for (const match of multiLineMatches) {
+      const question = match[1].trim();
+      const answer = match[2].trim();
       
-      allCards.push({
-        id: `${note.id}-title-2`,
-        noteId: note.id,
-        front: `Describe ${note.title}`,
-        back: note.summary || 'No detailed description available',
-        tags: [...(note.tags || []), 'title']
+      if (question.length > 3 && answer.length > 3) {
+        flashcards.push({
+          question: question,
+          answer: answer
+        });
+      }
+    }
+    
+    if (flashcards.length > 0) return flashcards;
+  }
+  
+  // Advanced matching for section-based content (like in our example)
+  if (text.includes('Section') && text.includes('**')) {
+    console.log('Trying section-based extraction');
+    
+    // Match questions and bullet point answers in sections
+    const sectionItems = text.split(/\d+\.\s+\*\*/);
+    for (let i = 1; i < sectionItems.length; i++) { // Start at 1 to skip header
+      const item = sectionItems[i];
+      if (!item) continue;
+      
+      const questionMatch = item.match(/(.*?)\*\*/);
+      if (questionMatch) {
+        const question = questionMatch[1].trim();
+        
+        // Find the bullet point content
+        const bulletMatch = item.match(/\*\s+(.*?)(?=\n\d+\.|$)/s);
+        if (bulletMatch) {
+          const answer = bulletMatch[1].trim();
+          
+          if (question.length > 3 && answer.length > 3) {
+            flashcards.push({
+              question: question,
+              answer: answer
+            });
+          }
+        }
+      }
+    }
+    
+    if (flashcards.length > 0) return flashcards;
+  }
+  
+  // Try to extract from numbered items in a format like "1. { "question": "...", "answer": "..." }"
+  // This is a common pattern in OpenRouter AI responses with multiple sections
+  if (text.includes('{') && text.match(/\d+\.\s*\{/)) {
+    console.log('Trying numbered-object extraction');
+    
+    const numberObjectPattern = /\d+\.\s*(\{[\s\S]*?\})/g;
+    const objectMatches = [...text.matchAll(numberObjectPattern)];
+    
+    if (objectMatches && objectMatches.length > 0) {
+      for (const match of objectMatches) {
+        try {
+          const jsonObj = JSON.parse(match[1]);
+          if (jsonObj.question && jsonObj.answer) {
+            flashcards.push({
+              question: jsonObj.question,
+              answer: jsonObj.answer
+            });
+          }
+        } catch (e) {
+          // Skip this item if JSON parsing fails
+          console.log(`Failed to parse JSON object: ${e.message}`);
+        }
+      }
+      
+      if (flashcards.length > 0) {
+        console.log(`Successfully extracted ${flashcards.length} numbered JSON objects`);
+        return flashcards;
+      }
+    }
+  }
+  
+  // If all extraction methods fail, create at least one default flashcard
+  if (flashcards.length === 0) {
+    console.log('All extraction methods failed, using default flashcard');
+    flashcards.push({
+      question: `What is the main topic of "${noteTitle || 'this note'}"?`,
+      answer: "Review the note content for the main topic."
+    });
+  }
+  
+  return flashcards;
+}
+
+// Authentication routes
+app.use('/api/auth', auth.router);
+
+// Protected API routes
+// Notes endpoint
+app.get('/api/notes', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const notes = await db.getNotes(userId);
+    res.json(notes);
+  } catch (error) {
+    console.error('Error fetching notes:', error);
+    res.status(500).json({ message: 'Failed to fetch notes', error: error.message });
+  }
+});
+
+app.get('/api/notes/:id', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const noteId = req.params.id;
+    const note = await db.getNoteById(noteId, userId);
+    
+    if (!note) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+    
+    res.json(note);
+  } catch (error) {
+    console.error('Error fetching note:', error);
+    res.status(500).json({ message: 'Failed to fetch note', error: error.message });
+  }
+});
+
+app.post('/api/notes', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { title, content, summary, tags } = req.body;
+    
+    if (!title || !content) {
+      return res.status(400).json({ message: 'Title and content are required' });
+    }
+    
+    // Create a new note with explicit timestamp
+    const currentTime = new Date().toISOString();
+    const note = await db.createNote({
+      title,
+      content,
+      summary: summary || await generateSummary(content),
+      tags: tags || generateTags(content),
+      created_at: currentTime,
+      updated_at: currentTime
+    }, userId);
+    
+    res.status(201).json(note);
+  } catch (error) {
+    console.error('Error creating note:', error);
+    res.status(500).json({ message: 'Failed to create note', error: error.message });
+  }
+});
+
+app.put('/api/notes/:id', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const noteId = req.params.id;
+    const { title, content, summary, tags } = req.body;
+    
+    if (!title || !content) {
+      return res.status(400).json({ message: 'Title and content are required' });
+    }
+    
+    // Update the note with explicit timestamp
+    const currentTime = new Date().toISOString();
+    const note = await db.updateNote(noteId, {
+      title,
+      content,
+      summary: summary || await generateSummary(content),
+      tags: tags || generateTags(content),
+      updated_at: currentTime
+    }, userId);
+    
+    res.json(note);
+  } catch (error) {
+    console.error('Error updating note:', error);
+    res.status(500).json({ message: 'Failed to update note', error: error.message });
+  }
+});
+
+app.delete('/api/notes/:id', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const noteId = req.params.id;
+    
+    await db.deleteNote(noteId, userId);
+    res.json({ message: 'Note deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting note:', error);
+    res.status(500).json({ message: 'Failed to delete note', error: error.message });
+  }
+});
+
+// Tags endpoint
+app.get('/api/tags', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const tags = await db.getAllTags(userId);
+    res.json(tags);
+  } catch (error) {
+    console.error('Error fetching tags:', error);
+    res.status(500).json({ message: 'Failed to fetch tags', error: error.message });
+  }
+});
+
+// Search endpoint
+app.get('/api/search', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { q, tags } = req.query;
+    
+    console.log('DEBUG: Search endpoint called with query params:', req.query);
+    
+    const tagArray = tags ? tags.split(',') : [];
+    console.log('DEBUG: Parsed tag array:', tagArray);
+    
+    const notes = await db.searchNotes(q, tagArray, userId);
+    console.log('DEBUG: Search endpoint returning', notes.length, 'notes');
+    
+    res.json(notes);
+  } catch (error) {
+    console.error('Error searching notes:', error);
+    res.status(500).json({ message: 'Search failed', error: error.message });
+  }
+});
+
+// File upload endpoint
+app.post('/api/upload', auth.authenticateJWT, upload.single('file'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
+    const filePath = req.file.path;
+    let extractedText = '';
+    let fileType = '';
+    
+    // Extract text based on file type
+    if (req.file.mimetype === 'application/pdf') {
+      extractedText = await extractTextFromPDF(filePath);
+      fileType = 'PDF';
+    } else if (req.file.mimetype === 'text/plain') {
+      extractedText = fs.readFileSync(filePath, 'utf8');
+      fileType = 'Text';
+    } else if (req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      extractedText = await extractTextFromDOCX(filePath);
+      fileType = 'DOCX';
+    }
+    
+    // Generate title from filename
+    const originalName = req.file.originalname;
+    const title = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
+    
+    // Generate summary
+    const summary = await generateSummary(extractedText);
+    
+    // Generate tags
+    const tags = generateTags(extractedText);
+    
+    // Create note with extracted content
+    const note = await db.createNote({
+      title,
+      content: extractedText,
+      summary,
+      tags
+    }, userId);
+    
+    // Cleanup the temporary file
+    fs.unlinkSync(filePath);
+    
+    res.status(201).json({
+      message: `Successfully processed ${fileType} file`,
+      note
+    });
+  } catch (error) {
+    console.error('Error processing uploaded file:', error);
+    
+    // Clean up the file if it exists
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({ message: 'Failed to process file', error: error.message });
+  }
+});
+
+// Flashcards endpoint - supports viewing without regeneration
+app.get('/api/notes/:id/flashcards/:cardId?', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const noteId = req.params.id;
+    // Always set skipGeneration to true for GET requests to prevent unwanted regeneration
+    const skipGeneration = true; 
+    
+    // Check if note exists and belongs to user
+    const note = await db.getNoteById(noteId, userId);
+    
+    if (!note) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+    
+    // Get flashcards from database
+    const flashcards = await db.getFlashcardsForNote(noteId);
+    
+    // If flashcards exist, return them
+    if (flashcards && flashcards.notes && flashcards.notes.length > 0) {
+      console.log('Found existing flashcards in database:', flashcards);
+      
+      // If requesting a specific card for the study interface
+      if (req.params.cardId) {
+        const cardIndex = parseInt(req.params.cardId, 10);
+        if (!isNaN(cardIndex) && cardIndex >= 0 && cardIndex < flashcards.notes.length) {
+          return res.json({
+            card: flashcards.notes[cardIndex],
+            total: flashcards.notes.length,
+            currentIndex: cardIndex
+          });
+        }
+      }
+      
+      return res.json(flashcards);
+    }
+    
+    // No flashcards found - don't generate new ones, just return not found
+    return res.status(404).json({ message: 'No flashcards found for this note' });
+  } catch (error) {
+    console.error('Error fetching flashcards:', error);
+    res.status(500).json({ message: 'Failed to fetch flashcards', error: error.message });
+  }
+});
+
+// Generate flashcards endpoint
+app.post('/api/notes/:id/flashcards/generate', auth.authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const noteId = req.params.id;
+    
+    // Check if note exists and belongs to user
+    const note = await db.getNoteById(noteId, userId);
+    
+    if (!note) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+    
+    // Check if content is sufficient
+    if (!isContentSufficientForAI(note.content)) {
+      return res.status(400).json({ 
+        message: 'Failed to generate flashcards. Please ensure your note has enough content.',
+        error: 'Content too short'
       });
     }
     
-    // As a last resort, create a flashcard with tags as topics
-    if (allCards.length === 0 && note.tags && note.tags.length > 0) {
-      allCards.push({
-        id: `${note.id}-tags-1`,
-        noteId: note.id,
-        front: `List topics related to ${note.title}`,
-        back: note.tags.join(', '),
-        tags: [...(note.tags || []), 'tags']
+    console.log(`Force regenerating flashcards for note ${noteId}`);
+    
+    try {
+      // Force regenerate flashcards
+      const generatedFlashcards = await generateFlashcardsWithLlama(
+        note.content,
+        note.title,
+        note.tags,
+        null,
+        true
+      );
+      
+      console.log('Generated flashcards:', generatedFlashcards);
+      
+      // Update note with new flashcards only if generation was successful
+      if (generatedFlashcards && generatedFlashcards.notes && generatedFlashcards.notes.length > 0) {
+        // First remove any existing flashcards
+        await db.removeAllFlashcardsFromNote(noteId);
+        
+        // Format flashcards for storage
+        const flashcardsToStore = generatedFlashcards.notes.map(card => ({
+          question: card.fields.Front,
+          answer: card.fields.Back
+        }));
+        
+        console.log('Storing flashcards:', flashcardsToStore);
+        
+        // Store the flashcards
+        await db.addFlashcardsToNote(noteId, flashcardsToStore);
+        
+        await db.updateNote(noteId, {
+          ...note,
+          flashcards: generatedFlashcards
+        }, userId);
+        
+        res.json(generatedFlashcards);
+      } else {
+        console.log('No valid flashcards returned');
+        res.status(400).json({ 
+          message: 'Failed to generate flashcards, no valid cards returned',
+          error: 'No valid flashcards' 
+        });
+      }
+    } catch (aiError) {
+      console.error('AI error when generating flashcards:', aiError.message);
+      res.status(500).json({ 
+        message: 'AI service error: ' + aiError.message,
+        error: 'AI service error'
       });
     }
-    
-    // Format for Anki
-    const ankiDeck = {
-      deckName: `Notes - ${note.title}`,
-      notes: allCards.map(card => ({
-        deckName: `Notes - ${note.title}`,
-        modelName: "Basic",
-        fields: {
-          Front: card.front,
-          Back: card.back
-        },
-        tags: card.tags
-      })),
-      generatedBy: 'basic'
-    };
-    
-    res.json(ankiDeck);
   } catch (error) {
     console.error('Error generating flashcards:', error);
-    
-    // Return a generic deck even on error
-    const fallbackDeck = {
-      deckName: `Notes - ${error.noteTitle || 'Error'}`,
-      notes: [{
-        deckName: `Notes - Error`,
-        modelName: "Basic",
-        fields: {
-          Front: "What is this note about?",
-          Back: "This is a fallback flashcard. Please try again with more content."
-        },
-        tags: ["error", "fallback"]
-      }],
-      generatedBy: 'error-fallback'
-    };
-    
-    res.json(fallbackDeck);
+    res.status(500).json({ message: 'Failed to generate flashcards', error: error.message });
   }
 });
 
-// Regenerate a summary for an existing note
-app.post('/api/notes/:id/regenerate-summary', async (req, res) => {
+// Regenerate summary endpoint
+app.post('/api/notes/:id/regenerate-summary', auth.authenticateJWT, async (req, res) => {
   try {
-    const noteIndex = notesDatabase.findIndex(note => note.id === req.params.id);
+    const userId = req.user.id;
+    const noteId = req.params.id;
     
-    if (noteIndex === -1) {
-      return res.status(404).json({ error: 'Note not found' });
+    // Check if note exists and belongs to user
+    const note = await db.getNoteById(noteId, userId);
+    
+    if (!note) {
+      return res.status(404).json({ message: 'Note not found' });
     }
     
-    // Get the existing note
-    const note = notesDatabase[noteIndex];
-    
-    // Check if content exists
-    if (!note.content || note.content.trim().length === 0) {
-      return res.status(400).json({ error: 'Note has no content to generate a summary' });
+    // Check if content is sufficient
+    if (!isContentSufficientForAI(note.content)) {
+      return res.status(400).json({ 
+        message: 'Failed to regenerate summary. Please ensure your note has enough content.',
+        error: 'Content too short' 
+      });
     }
     
-    // Get Ollama availability from cache
-    const isOllamaRunning = await getOllamaAvailability();
+    console.log(`Regenerating summary for note ${noteId}`);
     
-    // Generate a new summary (pass the Ollama status to avoid redundant checks)
-    const newSummary = await generateSummary(note.content, isOllamaRunning);
+    // Force regenerate summary
+    const summary = await generateSummary(note.content, true);
     
-    // Update the note
-    notesDatabase[noteIndex] = {
+    // Update note with new summary
+    const updatedNote = await db.updateNote(noteId, {
       ...note,
-      summary: newSummary,
-      updatedAt: new Date().toISOString()
-    };
+      summary
+    }, userId);
     
-    // Update the file for persistence
-    fs.writeFileSync(
-      path.join(notesDir, `${note.id}.json`),
-      JSON.stringify(notesDatabase[noteIndex], null, 2)
-    );
-    
-    res.json({ 
-      message: isOllamaRunning 
-        ? 'Summary regenerated successfully with Llama AI' 
-        : 'Summary regenerated with basic extraction (Llama AI not available)',
-      note: notesDatabase[noteIndex]
-    });
-    
-  } catch (error) {
-    // Return error message without detailed logging
-    res.status(500).json({ 
-      error: 'Failed to regenerate summary. Using basic extraction method.'
-    });
-  }
-});
-
-// Add diagnostic endpoint to check Ollama status
-app.get('/api/ollama-status', async (req, res) => {
-  try {
-    const isOllamaRunning = await getOllamaAvailability();
     res.json({
-      status: isOllamaRunning ? 'connected' : 'disconnected',
-      lastChecked: ollamaAvailabilityCache.lastChecked,
-      cacheStatus: ollamaAvailabilityCache
+      message: 'Summary regenerated successfully',
+      note: updatedNote
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Error checking Ollama status',
-      message: error.message 
-    });
+    console.error('Error regenerating summary:', error);
+    res.status(500).json({ message: 'Failed to regenerate summary', error: error.message });
   }
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', version: '1.0.0' });
 });
 
-module.exports = app; 
+// Check if Ollama is running
+app.get('/api/ollama-status', async (req, res) => {
+  res.json({ 
+    running: true,
+    model: OPENROUTER_MODEL,
+    provider: "OpenRouter",
+    modelInfo: "Meta Llama 3.3 70B Instruct (free)",
+    needsLocalSetup: false
+  });
+});
+
+// AI model info endpoint
+app.get('/api/ai-info', (req, res) => {
+  res.json({
+    model: OPENROUTER_MODEL,
+    provider: "OpenRouter",
+    modelInfo: "Meta Llama 3.3 70B Instruct (free)",
+    features: [
+      "Summary generation",
+      "Flashcard creation",
+      "Auto-tagging"
+    ],
+    needsLocalSetup: false
+  });
+});
+
+// On server startup, check if the model is available and log a warning if not
+(async () => {
+  try {
+    const response = await openRouterClient.get('/models');
+    if (response.status === 200) {
+      const models = response.data.data || [];
+      const modelExists = models.some(model => model.id === OPENROUTER_MODEL);
+      if (!modelExists) {
+        console.warn(`WARNING: The model ${OPENROUTER_MODEL} is not available in your OpenRouter account. Please check your account or model permissions.`);
+      } else {
+        console.log(`Model ${OPENROUTER_MODEL} is available in your OpenRouter account.`);
+      }
+    } else {
+      console.warn('Could not verify model availability at startup.');
+    }
+  } catch (err) {
+    console.warn('Error checking model availability at startup:', err.message);
+  }
+})();
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+}); 
