@@ -1,4 +1,3 @@
-
 // Load environment variables from .env file
 require('dotenv').config();
 
@@ -1185,4 +1184,8 @@ app.get('/api/ai-info', (req, res) => {
 // Start the server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
-}); 
+});
+
+(async () => {
+  await db.initDatabase();
+})(); 
